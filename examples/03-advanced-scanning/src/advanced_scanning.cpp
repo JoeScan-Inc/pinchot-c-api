@@ -191,6 +191,7 @@ void initialize_phase_table(jsScanSystem &scan_system,
     break;
 
   case (JS_SCAN_HEAD_JS50WSC):
+  case (JS_SCAN_HEAD_JS50MX):
     // Phase | Laser | Camera
     //   1   |   1   |   A
 

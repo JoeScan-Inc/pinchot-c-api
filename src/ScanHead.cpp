@@ -1325,6 +1325,10 @@ void ScanHead::LoadScanHeadSpecification(jsScanHeadType type,
     bin = (uint8_t *)js50x6b30_spec;
     bin_len = js50x6b30_spec_len;
     break;
+  case (JS_SCAN_HEAD_JS50MX):
+    bin = (uint8_t *)js50mx_spec;
+    bin_len = js50mx_spec_len;
+    break;
   default:
     throw std::runtime_error("invalid jsScanHeadType");
   }

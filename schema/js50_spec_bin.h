@@ -15,6 +15,8 @@ extern const unsigned char js50x6b20_spec[];
 extern const unsigned int js50x6b20_spec_len;
 extern const unsigned char js50x6b30_spec[];
 extern const unsigned int js50x6b30_spec_len;
+extern const unsigned char js50mx_spec[];
+extern const unsigned int js50mx_spec_len;
 
 #ifdef __cplusplus
 }

@@ -131,6 +131,7 @@ static int32_t BroadcastDiscover(
         auto result = std::make_shared<jsDiscovered>();
         result->serial_number = msg->serial_number;
         result->ip_addr = msg->ip_server;
+        result->link_speed_mbps = msg->link_speed_mbps;
         result->type = (jsScanHeadType) msg->type;
         result->firmware_version_major = msg->version_major;
         result->firmware_version_minor = msg->version_minor;

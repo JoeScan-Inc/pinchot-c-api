@@ -659,10 +659,10 @@ int32_t jsScanSystemPhaseInsertLaser(jsScanSystem scan_system,
 }
 
 EXPORTED
-int32_t jsScanSystemPhaseInsertCameraConfiguration(jsScanSystem scan_system,
+int32_t jsScanSystemPhaseInsertConfigurationCamera(jsScanSystem scan_system,
                                                    jsScanHead scan_head,
-                                                   jsCamera camera,
-                                                   jsScanHeadConfiguration cfg)
+                                                   jsScanHeadConfiguration *cfg,
+                                                   jsCamera camera)
 {
   int32_t r = 0;
 
@@ -683,7 +683,7 @@ int32_t jsScanSystemPhaseInsertCameraConfiguration(jsScanSystem scan_system,
       return JS_ERROR_SCANNING;
     }
 
-    r = phase_table->AddToLastPhaseEntry(sh, camera, &cfg);
+    r = phase_table->AddToLastPhaseEntry(sh, camera, cfg);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -693,10 +693,10 @@ int32_t jsScanSystemPhaseInsertCameraConfiguration(jsScanSystem scan_system,
 }
 
 EXPORTED
-int32_t jsScanSystemPhaseInsertLaserConfiguration(jsScanSystem scan_system,
+int32_t jsScanSystemPhaseInsertConfigurationLaser(jsScanSystem scan_system,
                                                   jsScanHead scan_head,
-                                                  jsLaser laser,
-                                                  jsScanHeadConfiguration cfg)
+                                                  jsScanHeadConfiguration *cfg,
+                                                  jsLaser laser)
 {
   int32_t r = 0;
 
@@ -717,13 +717,31 @@ int32_t jsScanSystemPhaseInsertLaserConfiguration(jsScanSystem scan_system,
       return JS_ERROR_SCANNING;
     }
 
-    r = phase_table->AddToLastPhaseEntry(sh, laser, &cfg);
+    r = phase_table->AddToLastPhaseEntry(sh, laser, cfg);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
   }
 
   return r;
+}
+
+EXPORTED
+int32_t jsScanSystemPhaseInsertCameraConfiguration(jsScanSystem scan_system,
+                                                   jsScanHead scan_head,
+                                                   jsCamera camera,
+                                                   jsScanHeadConfiguration cfg)
+{
+  return JS_ERROR_INVALID_ARGUMENT;
+}
+
+EXPORTED
+int32_t jsScanSystemPhaseInsertLaserConfiguration(jsScanSystem scan_system,
+                                                  jsScanHead scan_head,
+                                                  jsLaser laser,
+                                                  jsScanHeadConfiguration cfg)
+{
+  return JS_ERROR_INVALID_ARGUMENT;
 }
 
 EXPORTED

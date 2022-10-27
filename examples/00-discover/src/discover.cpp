@@ -77,7 +77,8 @@ void PrintScanHeadDiscovered(jsDiscovered &d)
   std::cout << "  Firmware v" << d.firmware_version_major << "."
                               << d.firmware_version_minor << "."
                               << d.firmware_version_patch << "\n";
-  std::cout << "  IP Address " << IpToString(d.ip_addr) << std::endl;
+  std::cout << "  IP Address " << IpToString(d.ip_addr) << "\n";
+  std::cout << "  Link Speed " << d.link_speed_mbps << "Mbps" << std::endl;
 }
 
 int main(int argc, char *argv[])

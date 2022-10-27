@@ -28,6 +28,10 @@ static_assert((jsScanHeadType)schema::ScanHeadType_JS50X6B30 ==
                 JS_SCAN_HEAD_JS50X6B30,
               "JS50X6B30");
 
+static_assert((jsScanHeadType)schema::ScanHeadType_JS50MX ==
+                JS_SCAN_HEAD_JS50MX,
+              "JS50MX");
+
 static_assert(true == std::is_trivially_copyable<jsRawProfile>::value,
               "jsRawProfile not trivially copyable");
 

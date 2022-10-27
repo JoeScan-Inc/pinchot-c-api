@@ -65,6 +65,7 @@ struct MessageServerDiscoveryT : public flatbuffers::NativeTable {
   uint32_t ip_client = 0;
   uint32_t ip_server = 0;
   joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID;
+  uint32_t link_speed_mbps = 0;
 };
 
 struct MessageServerDiscovery FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -81,7 +82,8 @@ struct MessageServerDiscovery FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
     VT_TYPE_STR = 18,
     VT_IP_CLIENT = 20,
     VT_IP_SERVER = 22,
-    VT_STATE = 24
+    VT_STATE = 24,
+    VT_LINK_SPEED_MBPS = 26
   };
   uint32_t version_major() const {
     return GetField<uint32_t>(VT_VERSION_MAJOR, 0);
@@ -116,6 +118,9 @@ struct MessageServerDiscovery FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
   joescan::schema::server::ScanHeadState state() const {
     return static_cast<joescan::schema::server::ScanHeadState>(GetField<uint16_t>(VT_STATE, 0));
   }
+  uint32_t link_speed_mbps() const {
+    return GetField<uint32_t>(VT_LINK_SPEED_MBPS, 0);
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_VERSION_MAJOR) &&
@@ -130,6 +135,7 @@ struct MessageServerDiscovery FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tab
            VerifyField<uint32_t>(verifier, VT_IP_CLIENT) &&
            VerifyField<uint32_t>(verifier, VT_IP_SERVER) &&
            VerifyField<uint16_t>(verifier, VT_STATE) &&
+           VerifyField<uint32_t>(verifier, VT_LINK_SPEED_MBPS) &&
            verifier.EndTable();
   }
   MessageServerDiscoveryT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -174,6 +180,9 @@ struct MessageServerDiscoveryBuilder {
   void add_state(joescan::schema::server::ScanHeadState state) {
     fbb_.AddElement<uint16_t>(MessageServerDiscovery::VT_STATE, static_cast<uint16_t>(state), 0);
   }
+  void add_link_speed_mbps(uint32_t link_speed_mbps) {
+    fbb_.AddElement<uint32_t>(MessageServerDiscovery::VT_LINK_SPEED_MBPS, link_speed_mbps, 0);
+  }
   explicit MessageServerDiscoveryBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -197,8 +206,10 @@ inline flatbuffers::Offset<MessageServerDiscovery> CreateMessageServerDiscovery(
     flatbuffers::Offset<flatbuffers::String> type_str = 0,
     uint32_t ip_client = 0,
     uint32_t ip_server = 0,
-    joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID) {
+    joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID,
+    uint32_t link_speed_mbps = 0) {
   MessageServerDiscoveryBuilder builder_(_fbb);
+  builder_.add_link_speed_mbps(link_speed_mbps);
   builder_.add_ip_server(ip_server);
   builder_.add_ip_client(ip_client);
   builder_.add_type_str(type_str);
@@ -225,7 +236,8 @@ inline flatbuffers::Offset<MessageServerDiscovery> CreateMessageServerDiscoveryD
     const char *type_str = nullptr,
     uint32_t ip_client = 0,
     uint32_t ip_server = 0,
-    joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID) {
+    joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID,
+    uint32_t link_speed_mbps = 0) {
   auto type_str__ = type_str ? _fbb.CreateString(type_str) : 0;
   return joescan::schema::server::CreateMessageServerDiscovery(
       _fbb,
@@ -239,7 +251,8 @@ inline flatbuffers::Offset<MessageServerDiscovery> CreateMessageServerDiscoveryD
       type_str__,
       ip_client,
       ip_server,
-      state);
+      state,
+      link_speed_mbps);
 }
 
 flatbuffers::Offset<MessageServerDiscovery> CreateMessageServerDiscovery(flatbuffers::FlatBufferBuilder &_fbb, const MessageServerDiscoveryT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -264,6 +277,7 @@ inline void MessageServerDiscovery::UnPackTo(MessageServerDiscoveryT *_o, const 
   { auto _e = ip_client(); _o->ip_client = _e; }
   { auto _e = ip_server(); _o->ip_server = _e; }
   { auto _e = state(); _o->state = _e; }
+  { auto _e = link_speed_mbps(); _o->link_speed_mbps = _e; }
 }
 
 inline flatbuffers::Offset<MessageServerDiscovery> MessageServerDiscovery::Pack(flatbuffers::FlatBufferBuilder &_fbb, const MessageServerDiscoveryT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -285,6 +299,7 @@ inline flatbuffers::Offset<MessageServerDiscovery> CreateMessageServerDiscovery(
   auto _ip_client = _o->ip_client;
   auto _ip_server = _o->ip_server;
   auto _state = _o->state;
+  auto _link_speed_mbps = _o->link_speed_mbps;
   return joescan::schema::server::CreateMessageServerDiscovery(
       _fbb,
       _version_major,
@@ -297,7 +312,8 @@ inline flatbuffers::Offset<MessageServerDiscovery> CreateMessageServerDiscovery(
       _type_str,
       _ip_client,
       _ip_server,
-      _state);
+      _state,
+      _link_speed_mbps);
 }
 
 inline const joescan::schema::server::MessageServerDiscovery *GetMessageServerDiscovery(const void *buf) {

@@ -139,6 +139,7 @@ typedef enum {
   JS_SCAN_HEAD_JS50WSC = 2,
   JS_SCAN_HEAD_JS50X6B20 = 3,
   JS_SCAN_HEAD_JS50X6B30 = 4,
+  JS_SCAN_HEAD_JS50MX = 5,
 } jsScanHeadType;
 
 /**
@@ -234,6 +235,7 @@ typedef enum {
 typedef struct {
   uint32_t serial_number;
   uint32_t ip_addr;
+  uint32_t link_speed_mbps;
   jsScanHeadType type;
   char type_str[JS_SCAN_HEAD_TYPE_STR_MAX_LEN];
   /** @brief Firmware major version number of the scan head. */
@@ -836,14 +838,15 @@ EXPORTED int32_t PRE jsScanSystemPhaseInsertLaser(
  *
  * @param scan_system Reference to the scan system.
  * @param scan_head Reference to the scan head.
+ * @param cfg Configuration to be applied to the camera.
  * @param camera The camera of the scan head to scan with during phase entry.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanSystemPhaseInsertCameraConfiguration(
+EXPORTED int32_t PRE jsScanSystemPhaseInsertConfigurationCamera(
   jsScanSystem scan_system,
   jsScanHead scan_head,
-  jsCamera camera,
-  jsScanHeadConfiguration cfg) POST;
+  jsScanHeadConfiguration *cfg,
+  jsCamera camera) POST;
 
 /**
  * @brief Inserts a scan head and it's laser into a given phase entry.
@@ -863,9 +866,31 @@ EXPORTED int32_t PRE jsScanSystemPhaseInsertCameraConfiguration(
  *
  * @param scan_system Reference to the scan system.
  * @param scan_head Reference to the scan head.
- * @param laser The camera of the scan head to scan with during phase entry.
  * @param cfg Configuration to be applied to the laser.
+ * @param laser The camera of the scan head to scan with during phase entry.
  * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemPhaseInsertConfigurationLaser(
+  jsScanSystem scan_system,
+  jsScanHead scan_head,
+  jsScanHeadConfiguration *cfg,
+  jsLaser laser) POST;
+
+/**
+ * @deprecated Use `jsScanSystemPhaseInsertConfigurationCamera`.
+ *
+ * @return `JS_ERROR_INVALID_ARGUMENT`
+ */
+EXPORTED int32_t PRE jsScanSystemPhaseInsertCameraConfiguration(
+  jsScanSystem scan_system,
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsScanHeadConfiguration cfg) POST;
+
+/**
+ * @deprecated Use `jsScanSystemPhaseInsertConfigurationLaser`.
+ *
+ * @return `JS_ERROR_INVALID_ARGUMENT`
  */
 EXPORTED int32_t PRE jsScanSystemPhaseInsertLaserConfiguration(
   jsScanSystem scan_system,
