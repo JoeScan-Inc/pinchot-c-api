@@ -4,14 +4,18 @@ endif()
 
 # Get the latest abbreviated commit hash of the working branch
 execute_process(
-  COMMAND git log -1 --format=%h
+  COMMAND git
+  -C ${PINCHOT_API_ROOT_DIR}
+  log -1 --format=%h
   WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
   OUTPUT_VARIABLE GIT_HASH
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
 execute_process(
-  COMMAND git diff --quiet --exit-code
+  COMMAND git
+  -C ${PINCHOT_API_ROOT_DIR}
+  diff --quiet --exit-code
   RESULT_VARIABLE GIT_DIFF_STATUS
 )
 

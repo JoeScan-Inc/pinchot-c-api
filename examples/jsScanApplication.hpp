@@ -18,6 +18,8 @@
 
 #include <functional>
 #include <iostream>
+#include <string>
+#include <thread>
 #include <vector>
 #include "joescan_pinchot.h"
 
@@ -59,7 +61,7 @@ class ApiError : public std::runtime_error {
 
 class ScanApplication {
  public:
-  ScanApplication()
+  ScanApplication() : m_is_phase_table_set(false)
   {
     m_threads = nullptr;
 
@@ -172,7 +174,9 @@ class ScanApplication {
       }
     }
 
-    ConfigureGenericPhaseTable();
+    if (!m_is_phase_table_set) {
+      ConfigureDistinctElementPhaseTable();
+    }
   }
 
   void Connect()
@@ -256,13 +260,164 @@ class ScanApplication {
     return m_scan_heads;
   }
 
- private:
+  void ConfigureDistinctElementPhaseTable()
+  {
+    int32_t r = 0;
+
+    // Assume that the system is comprised of scan heads that are all the same.
+    jsScanHeadType type = jsScanHeadGetType(m_scan_heads[0]);
+
+    r = jsScanSystemPhaseClearAll(m_scan_system);
+    if (0 != r) {
+      throw ApiError("failed to clear phase table", r);
+    }
+
+    // For this example we will create a phase table that interleaves lasers
+    // seen by Camera A and Camera B. This allows fast and efficient scanning
+    // by allowing one camera to scan while the other has the scan data read out
+    // & processed; if the same camera is used back to back, a time penalty
+    // will be incurred to ensure scan data isn't overwritten.
+    switch (type) {
+    case (JS_SCAN_HEAD_JS50X6B20):
+    case (JS_SCAN_HEAD_JS50X6B30):
+      // Phase | Laser | Camera
+      //   1   |   1   |   B
+      //   2   |   4   |   A
+      //   3   |   2   |   B
+      //   4   |   5   |   A
+      //   5   |   3   |   B
+      //   6   |   6   |   A
+
+      for (auto scan_head : m_scan_heads) {
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_1);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_4);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_2);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_5);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_3);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_6);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+      }
+      break;
+
+    case (JS_SCAN_HEAD_JS50WSC):
+    case (JS_SCAN_HEAD_JS50MX):
+      for (auto scan_head : m_scan_heads) {
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertCamera(m_scan_system, scan_head,
+                                          JS_CAMERA_A);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+      }
+      break;
+
+    case (JS_SCAN_HEAD_JS50WX):
+      for (auto scan_head : m_scan_heads) {
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertCamera(m_scan_system, scan_head,
+                                          JS_CAMERA_A);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertCamera(m_scan_system, scan_head,
+                                          JS_CAMERA_B);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+      }
+      break;
+
+    case (JS_SCAN_HEAD_INVALID_TYPE):
+    default:
+      throw ApiError("invalid scan head type", 0);
+    }
+
+    m_is_phase_table_set = true;
+  }
+
   void ConfigureGenericPhaseTable()
   {
     int32_t r = 0;
 
     // Assume that the system is comprised of scan heads that are all the same.
     jsScanHeadType type = jsScanHeadGetType(m_scan_heads[0]);
+
+    r = jsScanSystemPhaseClearAll(m_scan_system);
+    if (0 != r) {
+      throw ApiError("failed to clear phase table", r);
+    }
 
     // For this example we will create a phase table that interleaves lasers
     // seen by Camera A and Camera B. This allows fast and efficient scanning
@@ -368,13 +523,17 @@ class ScanApplication {
     default:
       throw ApiError("invalid scan head type", 0);
     }
+
+    m_is_phase_table_set = true;
   }
 
+ private:
   std::thread *m_threads;
   std::vector<uint32_t> m_serial_numbers;
   std::vector<jsScanHead> m_scan_heads;
   jsScanSystem m_scan_system;
   jsScanHeadConfiguration m_config;
+  bool m_is_phase_table_set;
   double m_top;
   double m_bottom;
   double m_left;

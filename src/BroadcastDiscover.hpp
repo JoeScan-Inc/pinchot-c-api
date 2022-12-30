@@ -5,6 +5,7 @@
 #include <map>
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 
 #include "joescan_pinchot.h"

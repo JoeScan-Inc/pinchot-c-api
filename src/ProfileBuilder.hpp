@@ -18,7 +18,7 @@
 
 namespace joescan {
 struct ProfileBuilder {
-  ProfileBuilder() : raw(nullptr)
+  ProfileBuilder() : raw(nullptr), m_source(0), m_timestamp(0)
   {
   }
 
@@ -53,6 +53,9 @@ struct ProfileBuilder {
       raw->data[n].y = JS_PROFILE_DATA_INVALID_XY;
       raw->data[n].brightness = JS_PROFILE_DATA_INVALID_BRIGHTNESS;
     }
+
+    m_source = packet.GetSourceId();
+    m_timestamp = raw->timestamp_ns;
   }
 
   inline void SetPacketInfo(uint32_t received, uint32_t expected)
@@ -89,7 +92,21 @@ struct ProfileBuilder {
     return (nullptr == raw) ? true : false;
   }
 
+  uint64_t Timestamp()
+  {
+    return m_timestamp;
+  }
+
+  uint32_t Source()
+  {
+    return m_source;
+  }
+
   std::shared_ptr<jsRawProfile> raw;
+
+ private:
+  uint32_t m_source;
+  uint64_t m_timestamp;
 };
 } // namespace joescan
 

@@ -23,6 +23,8 @@ else()
     ${SCHEMA_DIR}/MessageServer.fbs
     ${SCHEMA_DIR}/MessageDiscoveryClient.fbs
     ${SCHEMA_DIR}/MessageDiscoveryServer.fbs
+    ${SCHEMA_DIR}/MessageUpdateClient.fbs
+    ${SCHEMA_DIR}/MessageUpdateServer.fbs
     ${SCHEMA_DIR}/ScanHeadType.fbs
     ${SCHEMA_DIR}/ScanHeadSpecification.fbs)
 

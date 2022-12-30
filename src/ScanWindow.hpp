@@ -9,6 +9,7 @@
 #define JOESCAN_SCAN_WINDOW_H
 
 #include <vector>
+#include "joescan_pinchot.h"
 #include "WindowConstraint.hpp"
 
 namespace joescan {
@@ -26,6 +27,8 @@ class ScanWindow {
    */
   ScanWindow(double top = 30.0, double bottom = -30.0, double left = -30.0,
              double right = 30.0);
+
+  ScanWindow(std::vector<jsCoordinate> coordinates);
 
   /**
    * Initializes a scan window to the same values held by another
@@ -46,6 +49,8 @@ class ScanWindow {
    */
   std::vector<WindowConstraint> GetConstraints() const;
 
+  std::vector<jsCoordinate> GetCoordinates() const;
+
   double GetTop() const;
   double GetBottom() const;
   double GetLeft() const;
@@ -54,6 +59,7 @@ class ScanWindow {
  private:
   /// Vector of constraints in 1/1000 scan system units.
   std::vector<WindowConstraint> m_constraints;
+  std::vector<jsCoordinate> m_coordinates;
   double m_top;
   double m_bottom;
   double m_left;

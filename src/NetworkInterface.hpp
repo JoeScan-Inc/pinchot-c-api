@@ -40,6 +40,7 @@ class NetworkInterface {
   static void CloseSocket(SOCKET sockfd);
 
   static std::vector<uint32_t> GetActiveIpAddresses();
+  static int ResolveIpAddressMDNS(uint32_t serial_number, uint32_t *ip);
 
  private:
   static net_iface InitUDPSocket(uint32_t ip, uint16_t port);

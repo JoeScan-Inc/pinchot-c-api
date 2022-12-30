@@ -31,8 +31,9 @@ ScanWindow::ScanWindow(double top, double bottom, double left, double right)
   int32_t left1000 = static_cast<int32_t>(left * 1000.0);
   int32_t right1000 = static_cast<int32_t>(right * 1000.0);
 
-  m_constraints.push_back(WindowConstraint(
-    Point2D<int64_t>(left1000, top1000), Point2D<int64_t>(right1000, top1000)));
+  m_constraints.push_back(
+    WindowConstraint(Point2D<int64_t>(left1000, top1000),
+                     Point2D<int64_t>(right1000, top1000)));
 
   m_constraints.push_back(
     WindowConstraint(Point2D<int64_t>(right1000, bottom1000),
@@ -47,9 +48,38 @@ ScanWindow::ScanWindow(double top, double bottom, double left, double right)
                      Point2D<int64_t>(left1000, top1000)));
 }
 
+ScanWindow::ScanWindow(std::vector<jsCoordinate> coordinates)
+  : m_coordinates(coordinates), m_top(0.0), m_bottom(0.0), m_left(0.0),
+    m_right(0.0)
+{
+  for (uint32_t n = 0; n < (coordinates.size() - 1); n++) {
+    int32_t x0 = coordinates[n + 0].x * 1000;
+    int32_t y0 = coordinates[n + 0].y * 1000;
+    int32_t x1 = coordinates[n + 1].x * 1000;
+    int32_t y1 = coordinates[n + 1].y * 1000;
+    m_constraints.push_back(
+      WindowConstraint(Point2D<int64_t>(x0, y0), Point2D<int64_t>(x1, y1)));
+  }
+
+  // connect first & last points together
+  {
+    int32_t x0 = coordinates[coordinates.size() - 1].x * 1000;
+    int32_t y0 = coordinates[coordinates.size() - 1].y * 1000;
+    int32_t x1 = coordinates[0].x * 1000;
+    int32_t y1 = coordinates[0].y * 1000;
+    m_constraints.push_back(
+      WindowConstraint(Point2D<int64_t>(x0, y0), Point2D<int64_t>(x1, y1)));
+  }
+}
+
 std::vector<WindowConstraint> ScanWindow::GetConstraints() const
 {
   return m_constraints;
+}
+
+std::vector<jsCoordinate> ScanWindow::GetCoordinates() const
+{
+  return m_coordinates;
 }
 
 double ScanWindow::GetTop() const

@@ -41,13 +41,16 @@ typedef int64_t jsScanHead;
  * @brief Constant values used with this API.
  */
 enum jsConstants {
+  /** @brief Maximum string length of JS-50 scan head. */
   JS_SCAN_HEAD_TYPE_STR_MAX_LEN = 32,
+  /** @brief Maximum number of columns of scan data captured by the camera. */
+  JS_SCAN_HEAD_DATA_COLUMNS_MAX_LEN = 1456,
   /** @brief Array length of data reserved for a profile. */
-  JS_PROFILE_DATA_LEN = 1456,
+  JS_PROFILE_DATA_LEN = JS_SCAN_HEAD_DATA_COLUMNS_MAX_LEN,
   /** @brief Array length of data reserved for a raw profile. */
-  JS_RAW_PROFILE_DATA_LEN = 1456,
+  JS_RAW_PROFILE_DATA_LEN = JS_SCAN_HEAD_DATA_COLUMNS_MAX_LEN,
   /** @brief Maximum number of columns in an image taken from the scan head. */
-  JS_CAMERA_IMAGE_DATA_MAX_WIDTH = 1456,
+  JS_CAMERA_IMAGE_DATA_MAX_WIDTH = JS_SCAN_HEAD_DATA_COLUMNS_MAX_LEN,
   /** @brief Maximum number of rows in an image taken from the scan head. */
   JS_CAMERA_IMAGE_DATA_MAX_HEIGHT = 1088,
   /** @brief Array length of data reserved for an image. */
@@ -96,18 +99,22 @@ enum jsError {
   /** @brief Error occurred from a version compatibility issue between the scan
      head(s) and the API. */
   JS_ERROR_VERSION_COMPATIBILITY = -8,
-  /** @brief Error occured trying to add or create something that already has
+  /** @brief Error occurred trying to add or create something that already has
       been done and would result in a duplicate. */
   JS_ERROR_ALREADY_EXISTS = -9,
-  /** @brief Error occured trying to add or create something, but due to
+  /** @brief Error occurred trying to add or create something, but due to
       constraints this can not be done. */
   JS_ERROR_NO_MORE_ROOM = -10,
-  /** @brief Error occured with networking interface or communication. */
+  /** @brief Error occurred with networking interface or communication. */
   JS_ERROR_NETWORK = -11,
-  /** @brief Error occured with scan head not found on the network. */
+  /** @brief Error occurred with scan head not found on the network. */
   JS_ERROR_NOT_DISCOVERED = -12,
-  /** @brief Error occured for an unknown reason; this should never happen. */
-  JS_ERROR_UNKNOWN = -13,
+  /** @brief Error from wrong function call, use `*Camera` variant function. */
+  JS_ERROR_USE_CAMERA_FUNCTION = -13,
+  /** @brief Error from wrong function call, use `*Laser` variant function. */
+  JS_ERROR_USE_LASER_FUNCTION = -14,
+  /** @brief Error occurred for an unknown reason; this should never happen. */
+  JS_ERROR_UNKNOWN = -15,
 };
 
 /**
@@ -349,6 +356,39 @@ typedef struct {
 } jsScanHeadConfiguration;
 
 /**
+ * @brief Structure used to define which pixels in the camera to exclude from
+ * scan data.
+ */
+typedef struct {
+  /**
+   * @brief A 2D array with each entry representing one pixel in view of the
+   * camera. Setting to a non-zero value will block that pixel from being used
+   * when scanning; ensuring no scan data being generated at that point.
+   */
+  uint8_t bitmap[JS_CAMERA_IMAGE_DATA_MAX_HEIGHT]
+                [JS_CAMERA_IMAGE_DATA_MAX_WIDTH];
+} jsExclusionMask;
+
+/**
+ * @brief Structure used to adjust and scale the brightness values returned
+ * with scan data. The brightness is corrected in the following manner:
+ *
+ *   new_brightness[col] = original_brightness[col] *
+ *                         scale_factors[col] + offset
+ */
+typedef struct {
+  /** @brief Value to offset brightness for all scan data columns. */
+  uint8_t offset;
+  /**
+   * @brief Value to scale brightness for a particular column of scan data.
+   *
+   * @note The array entries correspond to the same position of profile data
+   * points as ordered in the `jsRawProfile` struct.
+   */
+  float scale_factors[JS_SCAN_HEAD_DATA_COLUMNS_MAX_LEN];
+} jsBrightnessCorrection_BETA;
+
+/**
  * @brief Structure used to hold information pertaining to the scan head.
  */
 typedef struct {
@@ -369,6 +409,20 @@ typedef struct {
   /** @brief Total number of profiles sent during the last scan period. */
   uint32_t num_profiles_sent;
 } jsScanHeadStatus;
+
+/**
+ * @brief A spatial coordinate point in scan system units.
+ */
+typedef struct {
+  /**
+   * @brief The X coordinate in scan system units.
+   */
+  double x;
+  /**
+   * @brief The Y coordinate in scan system units.
+   */
+  double y;
+} jsCoordinate;
 
 /**
  * @brief A data point within a returned profile's data.
@@ -627,6 +681,27 @@ EXPORTED void PRE jsGetAPISemanticVersion(
 EXPORTED void PRE jsGetError(
   int32_t return_code,
   const char **error_str) POST;
+
+/**
+ * @brief Performs a remote soft power cycle of a scan head.
+ *
+ * @note This function will only work with scan heads running v16.x.x firmware
+ * or higher.
+ *
+ * @note Extreme care should be used when using this function. The scan head
+ * being power cycled should NOT be connected or scanning. It is recommended
+ * to have the entire scan system in a disconnected state.
+ *
+ * @note After this function successfully completes, it will take several
+ * seconds before the scan head will appear on the network and be available for
+ * use. On average, the scan head will take 30 seconds to reboot.
+ *
+ * @param serial_number The serial number of the scan head to power cycle.
+ * @return `0` on success, negative value `jsError` on error.
+ */
+EXPORTED
+int32_t jsPowerCycleScanHead(
+  uint32_t serial_number) POST;
 
 /**
  * @brief Creates a `jsScanSystem` used to manage and coordinate `jsScanHead`
@@ -1177,11 +1252,219 @@ EXPORTED int32_t PRE jsScanHeadGetAlignmentLaser(
   double *shift_y) POST;
 
 /**
+ * @brief Allows specific pixels to be masked from scanning. This is useful to
+ * help exclude regions in the field of view that generate spurious data due to
+ * competing light sources. In order to exclude a given pixel, set the
+ * appropriate entry in the `jsExclusionMask` struct to a non-zero value.
+ *
+ * @note Only supported by JS-50 scan heads running v16.1.0 firmware or greater.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to apply exclusion mask to.
+ * @param mask Pointer to mask of pixels to exclude.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetExclusionMaskCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsExclusionMask *mask) POST;
+
+/**
+ * @brief Allows specific pixels to be masked from scanning. This is useful to
+ * help exclude regions in the field of view that generate spurious data due to
+ * competing light sources. In order to exclude a given pixel, set the
+ * appropriate entry in the `jsExclusionMask` struct to a non-zero value.
+ *
+ * @note Only supported by JS-50 scan heads running v16.1.0 firmware or greater.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to apply exclusion mask to.
+ * @param mask Pointer to mask of pixels to exclude.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetExclusionMaskLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsExclusionMask *mask) POST;
+
+/**
+ * @brief Gets the current exclusion mask applied.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera the exclusion mask is applied to.
+ * @param mask Pointer to be filled with current exclusion mask.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetExclusionMaskCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsExclusionMask *mask) POST;
+
+/**
+ * @brief Gets the current exclusion mask applied.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser the exclusion mask is applied to.
+ * @param mask Pointer to be filled with current exclusion mask.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetExclusionMaskLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsExclusionMask *mask) POST;
+
+/**
+ * @brief Allows adjusting the scan data's brightness values. This can be
+ * useful to help ensure uniformity across all columns of the scan data.
+ *
+ * @note This is a beta feature that may be changed in the future. It is
+ * is offered here to provide access to functionality that may prove useful to
+ * end users and allow them to submit feedback back to JoeScan. In a future
+ * release, this code may change; care should be taken when adding to
+ * applications. For any questions, reach out to a JoeScan representative for
+ * guidance.
+ *
+ * @note Only supported by JS-50 scan heads running v16.1.0 firmware or greater.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to apply exclusion mask to.
+ * @param correction Pointer to brightness correction to apply.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetBrightnessCorrectionCamera_BETA(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsBrightnessCorrection_BETA *correction) POST;
+
+/**
+ * @brief Allows adjusting the scan data's brightness values. This can be
+ * useful to help ensure uniformity across all columns of the scan data.
+ *
+ * @note This is a beta feature that may be changed in the future. It is
+ * is offered here to provide access to functionality that may prove useful to
+ * end users and allow them to submit feedback back to JoeScan. In a future
+ * release, this code may change; care should be taken when adding to
+ * applications. For any questions, reach out to a JoeScan representative for
+ * guidance.
+ *
+ * @note Only supported by JS-50 scan heads running v16.1.0 firmware or greater.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to apply exclusion mask to.
+ * @param correction Pointer to brightness correction to apply.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetBrightnessCorrectionLaser_BETA(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsBrightnessCorrection_BETA *correction) POST;
+
+/**
+ * @brief Gets the current brightness correction values applied.
+ *
+ * @note This is a beta feature that may be changed in the future. It is
+ * is offered here to provide access to functionality that may prove useful to
+ * end users and allow them to submit feedback back to JoeScan. In a future
+ * release, this code may change; care should be taken when adding to
+ * applications. For any questions, reach out to a JoeScan representative for
+ * guidance.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera the exclusion mask is applied to.
+ * @param correction Pointer to be filled with current brightness correction.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionCamera_BETA(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsBrightnessCorrection_BETA *correction) POST;
+
+/**
+ * @brief Gets the current brightness correction values applied.
+ *
+ * @note This is a beta feature that may be changed in the future. It is
+ * is offered here to provide access to functionality that may prove useful to
+ * end users and allow them to submit feedback back to JoeScan. In a future
+ * release, this code may change; care should be taken when adding to
+ * applications. For any questions, reach out to a JoeScan representative for
+ * guidance.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser the exclusion mask is applied to.
+ * @param correction Pointer to be filled with current brightness correction.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionLaser_BETA(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsBrightnessCorrection_BETA *correction) POST;
+
+/**
+ * @brief Configures the scan head to only return a profile after the specified
+ * number of ticks have occurred on `JS_ENCODER_MAIN`.
+ *
+ * @note Setting this value to zero, the default, will result in profiles
+ * always being returned irregardless of the encoder travel.
+ *
+ * @note Use `jsScanHeadSetIdleScanPeriod` to configure the scan head to return
+ * profiles at a reduced rate when the encoder has not traveled enough to
+ * trigger a new profile to be returned.
+ *
+ * @param scan_head Reference to scan head.
+ * @param min_encoder_travel Number of encoder ticks needed for new profile.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetMinimumEncoderTravel(
+  jsScanHead scan_head,
+  uint32_t min_encoder_travel);
+
+/**
+ * @brief Returns the configured encoder travel value set by
+ * `jsScanHeadSetMinimumEncoderTravel`.
+ *
+ * @param scan_head Reference to scan head.
+ * @param min_encoder_travel Pointer to store configured travel value.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetMinimumEncoderTravel(
+  jsScanHead scan_head,
+  uint32_t *min_encoder_travel);
+
+/**
+ * @brief Gonfigures the duration by which new profiles are returned to the
+ * user when the encoder travel value specified by
+ * `jsScanHeadSetMinimumEncoderTravel` has not been met.
+ *
+ * @note Setting this value to zero, the default will result in no profiles
+ * being returned until the encoder has traveled the specified distance.
+ *
+ * @note The resolution of the idle scan period is currently only in increments
+ * of the scan system's scan period and the number of times the scan head is
+ * scheduled in the phase table. Greater granularity will be achievable in a
+ * future release.
+ *
+ * @param scan_head Reference to scan head.
+ * @param idle_period_us The idle scan period in microseconds
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetIdleScanPeriod(
+  jsScanHead scan_head,
+  uint32_t idle_period_us);
+
+/**
+ * @brief Returns the configured duration set by `jsScanHeadSetIdleScanPeriod`.
+ *
+ * @param scan_head Reference to scan head.
+ * @param idle_period_us Pointer to store configured idle period value.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetIdleScanPeriod(
+  jsScanHead scan_head,
+  uint32_t *idle_period_us);
+
+/**
  * @brief Sets a rectangular scan window for a scan head to restrict its
  * field of view when scanning.
- *
- * @note The window settings are sent to the scan head during the call to
- * `jsScanSystemConnect`.
  *
  * @param scan_head Reference to scan head.
  * @param window_top The top window dimension in scan system units.
@@ -1196,6 +1479,101 @@ EXPORTED int32_t PRE jsScanHeadSetWindowRectangular(
   double window_bottom,
   double window_left,
   double window_right) POST;
+
+/**
+ * @brief Sets a rectangular scan window for a particular scan head's camera to
+ * restrict its field of view when scanning.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to apply the window to.
+ * @param window_top The top window dimension in scan system units.
+ * @param window_bottom The bottom window dimension in scan system units.
+ * @param window_left The left window dimension in scan system units.
+ * @param window_right The right window dimension in scan system units.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetWindowRectangularCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  double window_top,
+  double window_bottom,
+  double window_left,
+  double window_right) POST;
+
+/**
+ * @brief Sets a rectangular scan window for a particular scan head's laser to
+ * restrict its field of view when scanning.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to apply the window to.
+ * @param window_top The top window dimension in scan system units.
+ * @param window_bottom The bottom window dimension in scan system units.
+ * @param window_left The left window dimension in scan system units.
+ * @param window_right The right window dimension in scan system units.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetWindowRectangularLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  double window_top,
+  double window_bottom,
+  double window_left,
+  double window_right) POST;
+
+/**
+ * @brief Sets a user defined polygonal scan window for a scan head to restrict
+ * its field of view when scanning. The points must be ordered in a clockwise
+ * fashion and the resulting shape must be convex. The first and last points
+ * will be automatically connected, removing the need to duplicate the first
+ * point at the end of 'points'.
+ *
+ * @param scan_head Reference to scan head.
+ * @param points Array of coordinates defining the X/Y points of the polygon.
+ * @param points_len The number of points in the `points` array.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetPolygonWindow(
+  jsScanHead scan_head,
+  jsCoordinate *points,
+  uint32_t points_len);
+
+/**
+ * @brief Sets a user defined polygonal scan window for a particular scan
+ * head's camera to restrict its field of view when scanning. The points must
+ * be ordered in a clockwise fashion and the resulting shape must be convex.
+ * The first and last points will be automatically connected, removing the need
+ * to duplicate the first point at the end of 'points'.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to apply the window to.
+ * @param points Array of coordinates defining the X/Y points of the polygon.
+ * @param points_len The number of points in the `points` array.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetPolygonWindowCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsCoordinate *points,
+  uint32_t points_len);
+
+/**
+ * @brief Sets a user defined polygonal scan window for a particular scan
+ * head's laser to restrict its field of view when scanning. The points must
+ * be ordered in a clockwise fashion and the resulting shape must be convex.
+ * The first and last points will be automatically connected, removing the need
+ * to duplicate the first point at the end of 'points'.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to apply the window to.
+ * @param points Array of coordinates defining the X/Y points of the polygon.
+ * @param points_len The number of points in the `points` array.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetPolygonWindowLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsCoordinate *points,
+  uint32_t points_len);
 
 /**
  * @brief Reads the last reported status update from a scan head.
@@ -1257,6 +1635,12 @@ EXPORTED int32_t PRE jsScanHeadClearProfiles(
  * @brief Reads `jsProfile` formatted profile data from a given scan head.
  * The number of profiles returned is either the max value requested or the
  * total number of profiles ready to be read out, whichever is less.
+ *
+ * @note If no profiles are available this will return immediately.  Care should
+ * be taken if this function is used in a loop; it is advised to either sleep
+ * when `0` profiles are returned, or first call
+ * `jsScanHeadWaitUntilProfilesAvailable()` before `jScanHeadGetProfiles()` so
+ * as to avoid excessive CPU usage.
  *
  * @param scan_head Reference to scan head.
  * @param profiles Pointer to memory to store profile data. Note, the memory

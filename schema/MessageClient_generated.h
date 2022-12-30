@@ -42,6 +42,14 @@ struct WindowConfigurationData;
 struct WindowConfigurationDataBuilder;
 struct WindowConfigurationDataT;
 
+struct ExclusionMaskData;
+struct ExclusionMaskDataBuilder;
+struct ExclusionMaskDataT;
+
+struct BrightnessCorrectionData;
+struct BrightnessCorrectionDataBuilder;
+struct BrightnessCorrectionDataT;
+
 struct MessageClient;
 struct MessageClientBuilder;
 struct MessageClientT;
@@ -59,11 +67,13 @@ enum MessageType : uint16_t {
   MessageType_KEEP_ALIVE = 9,
   MessageType_MAPPLE_REQUEST = 10,
   MessageType_PROFILE_REQUEST = 11,
+  MessageType_EXCLUSION_MASK = 12,
+  MessageType_BRIGHTNESS_CORRECTION = 13,
   MessageType_MIN = MessageType_NONE,
-  MessageType_MAX = MessageType_PROFILE_REQUEST
+  MessageType_MAX = MessageType_BRIGHTNESS_CORRECTION
 };
 
-inline const MessageType (&EnumValuesMessageType())[12] {
+inline const MessageType (&EnumValuesMessageType())[14] {
   static const MessageType values[] = {
     MessageType_NONE,
     MessageType_CONNECT,
@@ -76,13 +86,15 @@ inline const MessageType (&EnumValuesMessageType())[12] {
     MessageType_STATUS_REQUEST,
     MessageType_KEEP_ALIVE,
     MessageType_MAPPLE_REQUEST,
-    MessageType_PROFILE_REQUEST
+    MessageType_PROFILE_REQUEST,
+    MessageType_EXCLUSION_MASK,
+    MessageType_BRIGHTNESS_CORRECTION
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageType() {
-  static const char * const names[13] = {
+  static const char * const names[15] = {
     "NONE",
     "CONNECT",
     "DISCONNECT",
@@ -95,13 +107,15 @@ inline const char * const *EnumNamesMessageType() {
     "KEEP_ALIVE",
     "MAPPLE_REQUEST",
     "PROFILE_REQUEST",
+    "EXCLUSION_MASK",
+    "BRIGHTNESS_CORRECTION",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageType(MessageType e) {
-  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_PROFILE_REQUEST)) return "";
+  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_BRIGHTNESS_CORRECTION)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageType()[index];
 }
@@ -174,11 +188,13 @@ enum MessageData : uint8_t {
   MessageData_ImageRequestData = 4,
   MessageData_MappleRequestData = 5,
   MessageData_ProfileRequestData = 6,
+  MessageData_ExclusionMaskData = 7,
+  MessageData_BrightnessCorrectionData = 8,
   MessageData_MIN = MessageData_NONE,
-  MessageData_MAX = MessageData_ProfileRequestData
+  MessageData_MAX = MessageData_BrightnessCorrectionData
 };
 
-inline const MessageData (&EnumValuesMessageData())[7] {
+inline const MessageData (&EnumValuesMessageData())[9] {
   static const MessageData values[] = {
     MessageData_NONE,
     MessageData_ConnectData,
@@ -186,13 +202,15 @@ inline const MessageData (&EnumValuesMessageData())[7] {
     MessageData_WindowConfigurationData,
     MessageData_ImageRequestData,
     MessageData_MappleRequestData,
-    MessageData_ProfileRequestData
+    MessageData_ProfileRequestData,
+    MessageData_ExclusionMaskData,
+    MessageData_BrightnessCorrectionData
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageData() {
-  static const char * const names[8] = {
+  static const char * const names[10] = {
     "NONE",
     "ConnectData",
     "ScanConfigurationData",
@@ -200,13 +218,15 @@ inline const char * const *EnumNamesMessageData() {
     "ImageRequestData",
     "MappleRequestData",
     "ProfileRequestData",
+    "ExclusionMaskData",
+    "BrightnessCorrectionData",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageData(MessageData e) {
-  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_ProfileRequestData)) return "";
+  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_BrightnessCorrectionData)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageData()[index];
 }
@@ -237,6 +257,14 @@ template<> struct MessageDataTraits<joescan::schema::client::MappleRequestData> 
 
 template<> struct MessageDataTraits<joescan::schema::client::ProfileRequestData> {
   static const MessageData enum_value = MessageData_ProfileRequestData;
+};
+
+template<> struct MessageDataTraits<joescan::schema::client::ExclusionMaskData> {
+  static const MessageData enum_value = MessageData_ExclusionMaskData;
+};
+
+template<> struct MessageDataTraits<joescan::schema::client::BrightnessCorrectionData> {
+  static const MessageData enum_value = MessageData_BrightnessCorrectionData;
 };
 
 struct MessageDataUnion {
@@ -318,6 +346,22 @@ struct MessageDataUnion {
   const joescan::schema::client::ProfileRequestDataT *AsProfileRequestData() const {
     return type == MessageData_ProfileRequestData ?
       reinterpret_cast<const joescan::schema::client::ProfileRequestDataT *>(value) : nullptr;
+  }
+  joescan::schema::client::ExclusionMaskDataT *AsExclusionMaskData() {
+    return type == MessageData_ExclusionMaskData ?
+      reinterpret_cast<joescan::schema::client::ExclusionMaskDataT *>(value) : nullptr;
+  }
+  const joescan::schema::client::ExclusionMaskDataT *AsExclusionMaskData() const {
+    return type == MessageData_ExclusionMaskData ?
+      reinterpret_cast<const joescan::schema::client::ExclusionMaskDataT *>(value) : nullptr;
+  }
+  joescan::schema::client::BrightnessCorrectionDataT *AsBrightnessCorrectionData() {
+    return type == MessageData_BrightnessCorrectionData ?
+      reinterpret_cast<joescan::schema::client::BrightnessCorrectionDataT *>(value) : nullptr;
+  }
+  const joescan::schema::client::BrightnessCorrectionDataT *AsBrightnessCorrectionData() const {
+    return type == MessageData_BrightnessCorrectionData ?
+      reinterpret_cast<const joescan::schema::client::BrightnessCorrectionDataT *>(value) : nullptr;
   }
 };
 
@@ -1132,6 +1176,195 @@ inline flatbuffers::Offset<WindowConfigurationData> CreateWindowConfigurationDat
 
 flatbuffers::Offset<WindowConfigurationData> CreateWindowConfigurationData(flatbuffers::FlatBufferBuilder &_fbb, const WindowConfigurationDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct ExclusionMaskDataT : public flatbuffers::NativeTable {
+  typedef ExclusionMaskData TableType;
+  uint32_t camera_port = 0;
+  uint32_t laser_port = 0;
+  std::vector<uint8_t> mask{};
+};
+
+struct ExclusionMaskData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef ExclusionMaskDataT NativeTableType;
+  typedef ExclusionMaskDataBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_CAMERA_PORT = 4,
+    VT_LASER_PORT = 6,
+    VT_MASK = 8
+  };
+  uint32_t camera_port() const {
+    return GetField<uint32_t>(VT_CAMERA_PORT, 0);
+  }
+  uint32_t laser_port() const {
+    return GetField<uint32_t>(VT_LASER_PORT, 0);
+  }
+  const flatbuffers::Vector<uint8_t> *mask() const {
+    return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_MASK);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_CAMERA_PORT) &&
+           VerifyField<uint32_t>(verifier, VT_LASER_PORT) &&
+           VerifyOffset(verifier, VT_MASK) &&
+           verifier.VerifyVector(mask()) &&
+           verifier.EndTable();
+  }
+  ExclusionMaskDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ExclusionMaskDataT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<ExclusionMaskData> Pack(flatbuffers::FlatBufferBuilder &_fbb, const ExclusionMaskDataT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ExclusionMaskDataBuilder {
+  typedef ExclusionMaskData Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_camera_port(uint32_t camera_port) {
+    fbb_.AddElement<uint32_t>(ExclusionMaskData::VT_CAMERA_PORT, camera_port, 0);
+  }
+  void add_laser_port(uint32_t laser_port) {
+    fbb_.AddElement<uint32_t>(ExclusionMaskData::VT_LASER_PORT, laser_port, 0);
+  }
+  void add_mask(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> mask) {
+    fbb_.AddOffset(ExclusionMaskData::VT_MASK, mask);
+  }
+  explicit ExclusionMaskDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<ExclusionMaskData> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<ExclusionMaskData>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<ExclusionMaskData> CreateExclusionMaskData(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t camera_port = 0,
+    uint32_t laser_port = 0,
+    flatbuffers::Offset<flatbuffers::Vector<uint8_t>> mask = 0) {
+  ExclusionMaskDataBuilder builder_(_fbb);
+  builder_.add_mask(mask);
+  builder_.add_laser_port(laser_port);
+  builder_.add_camera_port(camera_port);
+  return builder_.Finish();
+}
+
+inline flatbuffers::Offset<ExclusionMaskData> CreateExclusionMaskDataDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t camera_port = 0,
+    uint32_t laser_port = 0,
+    const std::vector<uint8_t> *mask = nullptr) {
+  auto mask__ = mask ? _fbb.CreateVector<uint8_t>(*mask) : 0;
+  return joescan::schema::client::CreateExclusionMaskData(
+      _fbb,
+      camera_port,
+      laser_port,
+      mask__);
+}
+
+flatbuffers::Offset<ExclusionMaskData> CreateExclusionMaskData(flatbuffers::FlatBufferBuilder &_fbb, const ExclusionMaskDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct BrightnessCorrectionDataT : public flatbuffers::NativeTable {
+  typedef BrightnessCorrectionData TableType;
+  uint32_t camera_port = 0;
+  uint32_t laser_port = 0;
+  int32_t image_offset = 0;
+  std::vector<float> scale_factors{};
+};
+
+struct BrightnessCorrectionData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef BrightnessCorrectionDataT NativeTableType;
+  typedef BrightnessCorrectionDataBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_CAMERA_PORT = 4,
+    VT_LASER_PORT = 6,
+    VT_IMAGE_OFFSET = 8,
+    VT_SCALE_FACTORS = 10
+  };
+  uint32_t camera_port() const {
+    return GetField<uint32_t>(VT_CAMERA_PORT, 0);
+  }
+  uint32_t laser_port() const {
+    return GetField<uint32_t>(VT_LASER_PORT, 0);
+  }
+  int32_t image_offset() const {
+    return GetField<int32_t>(VT_IMAGE_OFFSET, 0);
+  }
+  const flatbuffers::Vector<float> *scale_factors() const {
+    return GetPointer<const flatbuffers::Vector<float> *>(VT_SCALE_FACTORS);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_CAMERA_PORT) &&
+           VerifyField<uint32_t>(verifier, VT_LASER_PORT) &&
+           VerifyField<int32_t>(verifier, VT_IMAGE_OFFSET) &&
+           VerifyOffset(verifier, VT_SCALE_FACTORS) &&
+           verifier.VerifyVector(scale_factors()) &&
+           verifier.EndTable();
+  }
+  BrightnessCorrectionDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(BrightnessCorrectionDataT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<BrightnessCorrectionData> Pack(flatbuffers::FlatBufferBuilder &_fbb, const BrightnessCorrectionDataT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct BrightnessCorrectionDataBuilder {
+  typedef BrightnessCorrectionData Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_camera_port(uint32_t camera_port) {
+    fbb_.AddElement<uint32_t>(BrightnessCorrectionData::VT_CAMERA_PORT, camera_port, 0);
+  }
+  void add_laser_port(uint32_t laser_port) {
+    fbb_.AddElement<uint32_t>(BrightnessCorrectionData::VT_LASER_PORT, laser_port, 0);
+  }
+  void add_image_offset(int32_t image_offset) {
+    fbb_.AddElement<int32_t>(BrightnessCorrectionData::VT_IMAGE_OFFSET, image_offset, 0);
+  }
+  void add_scale_factors(flatbuffers::Offset<flatbuffers::Vector<float>> scale_factors) {
+    fbb_.AddOffset(BrightnessCorrectionData::VT_SCALE_FACTORS, scale_factors);
+  }
+  explicit BrightnessCorrectionDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<BrightnessCorrectionData> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<BrightnessCorrectionData>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionData(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t camera_port = 0,
+    uint32_t laser_port = 0,
+    int32_t image_offset = 0,
+    flatbuffers::Offset<flatbuffers::Vector<float>> scale_factors = 0) {
+  BrightnessCorrectionDataBuilder builder_(_fbb);
+  builder_.add_scale_factors(scale_factors);
+  builder_.add_image_offset(image_offset);
+  builder_.add_laser_port(laser_port);
+  builder_.add_camera_port(camera_port);
+  return builder_.Finish();
+}
+
+inline flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionDataDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t camera_port = 0,
+    uint32_t laser_port = 0,
+    int32_t image_offset = 0,
+    const std::vector<float> *scale_factors = nullptr) {
+  auto scale_factors__ = scale_factors ? _fbb.CreateVector<float>(*scale_factors) : 0;
+  return joescan::schema::client::CreateBrightnessCorrectionData(
+      _fbb,
+      camera_port,
+      laser_port,
+      image_offset,
+      scale_factors__);
+}
+
+flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionData(flatbuffers::FlatBufferBuilder &_fbb, const BrightnessCorrectionDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct MessageClientT : public flatbuffers::NativeTable {
   typedef MessageClient TableType;
   joescan::schema::client::MessageType type = joescan::schema::client::MessageType_NONE;
@@ -1174,6 +1407,12 @@ struct MessageClient FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const joescan::schema::client::ProfileRequestData *data_as_ProfileRequestData() const {
     return data_type() == joescan::schema::client::MessageData_ProfileRequestData ? static_cast<const joescan::schema::client::ProfileRequestData *>(data()) : nullptr;
   }
+  const joescan::schema::client::ExclusionMaskData *data_as_ExclusionMaskData() const {
+    return data_type() == joescan::schema::client::MessageData_ExclusionMaskData ? static_cast<const joescan::schema::client::ExclusionMaskData *>(data()) : nullptr;
+  }
+  const joescan::schema::client::BrightnessCorrectionData *data_as_BrightnessCorrectionData() const {
+    return data_type() == joescan::schema::client::MessageData_BrightnessCorrectionData ? static_cast<const joescan::schema::client::BrightnessCorrectionData *>(data()) : nullptr;
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint16_t>(verifier, VT_TYPE) &&
@@ -1209,6 +1448,14 @@ template<> inline const joescan::schema::client::MappleRequestData *MessageClien
 
 template<> inline const joescan::schema::client::ProfileRequestData *MessageClient::data_as<joescan::schema::client::ProfileRequestData>() const {
   return data_as_ProfileRequestData();
+}
+
+template<> inline const joescan::schema::client::ExclusionMaskData *MessageClient::data_as<joescan::schema::client::ExclusionMaskData>() const {
+  return data_as_ExclusionMaskData();
+}
+
+template<> inline const joescan::schema::client::BrightnessCorrectionData *MessageClient::data_as<joescan::schema::client::BrightnessCorrectionData>() const {
+  return data_as_BrightnessCorrectionData();
 }
 
 struct MessageClientBuilder {
@@ -1553,6 +1800,73 @@ inline flatbuffers::Offset<WindowConfigurationData> CreateWindowConfigurationDat
       _constraints);
 }
 
+inline ExclusionMaskDataT *ExclusionMaskData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ExclusionMaskDataT>(new ExclusionMaskDataT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ExclusionMaskData::UnPackTo(ExclusionMaskDataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = camera_port(); _o->camera_port = _e; }
+  { auto _e = laser_port(); _o->laser_port = _e; }
+  { auto _e = mask(); if (_e) { _o->mask.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->mask.begin()); } }
+}
+
+inline flatbuffers::Offset<ExclusionMaskData> ExclusionMaskData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ExclusionMaskDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateExclusionMaskData(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<ExclusionMaskData> CreateExclusionMaskData(flatbuffers::FlatBufferBuilder &_fbb, const ExclusionMaskDataT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const ExclusionMaskDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _camera_port = _o->camera_port;
+  auto _laser_port = _o->laser_port;
+  auto _mask = _o->mask.size() ? _fbb.CreateVector(_o->mask) : 0;
+  return joescan::schema::client::CreateExclusionMaskData(
+      _fbb,
+      _camera_port,
+      _laser_port,
+      _mask);
+}
+
+inline BrightnessCorrectionDataT *BrightnessCorrectionData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<BrightnessCorrectionDataT>(new BrightnessCorrectionDataT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void BrightnessCorrectionData::UnPackTo(BrightnessCorrectionDataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = camera_port(); _o->camera_port = _e; }
+  { auto _e = laser_port(); _o->laser_port = _e; }
+  { auto _e = image_offset(); _o->image_offset = _e; }
+  { auto _e = scale_factors(); if (_e) { _o->scale_factors.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scale_factors[_i] = _e->Get(_i); } } }
+}
+
+inline flatbuffers::Offset<BrightnessCorrectionData> BrightnessCorrectionData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const BrightnessCorrectionDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateBrightnessCorrectionData(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionData(flatbuffers::FlatBufferBuilder &_fbb, const BrightnessCorrectionDataT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const BrightnessCorrectionDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _camera_port = _o->camera_port;
+  auto _laser_port = _o->laser_port;
+  auto _image_offset = _o->image_offset;
+  auto _scale_factors = _o->scale_factors.size() ? _fbb.CreateVector(_o->scale_factors) : 0;
+  return joescan::schema::client::CreateBrightnessCorrectionData(
+      _fbb,
+      _camera_port,
+      _laser_port,
+      _image_offset,
+      _scale_factors);
+}
+
 inline MessageClientT *MessageClient::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<MessageClientT>(new MessageClientT());
   UnPackTo(_o.get(), _resolver);
@@ -1614,6 +1928,14 @@ inline bool VerifyMessageData(flatbuffers::Verifier &verifier, const void *obj, 
       auto ptr = reinterpret_cast<const joescan::schema::client::ProfileRequestData *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case MessageData_ExclusionMaskData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ExclusionMaskData *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessageData_BrightnessCorrectionData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::BrightnessCorrectionData *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -1656,6 +1978,14 @@ inline void *MessageDataUnion::UnPack(const void *obj, MessageData type, const f
       auto ptr = reinterpret_cast<const joescan::schema::client::ProfileRequestData *>(obj);
       return ptr->UnPack(resolver);
     }
+    case MessageData_ExclusionMaskData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ExclusionMaskData *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessageData_BrightnessCorrectionData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::BrightnessCorrectionData *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -1686,6 +2016,14 @@ inline flatbuffers::Offset<void> MessageDataUnion::Pack(flatbuffers::FlatBufferB
       auto ptr = reinterpret_cast<const joescan::schema::client::ProfileRequestDataT *>(value);
       return CreateProfileRequestData(_fbb, ptr, _rehasher).Union();
     }
+    case MessageData_ExclusionMaskData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ExclusionMaskDataT *>(value);
+      return CreateExclusionMaskData(_fbb, ptr, _rehasher).Union();
+    }
+    case MessageData_BrightnessCorrectionData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::BrightnessCorrectionDataT *>(value);
+      return CreateBrightnessCorrectionData(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -1714,6 +2052,14 @@ inline MessageDataUnion::MessageDataUnion(const MessageDataUnion &u) : type(u.ty
     }
     case MessageData_ProfileRequestData: {
       value = new joescan::schema::client::ProfileRequestDataT(*reinterpret_cast<joescan::schema::client::ProfileRequestDataT *>(u.value));
+      break;
+    }
+    case MessageData_ExclusionMaskData: {
+      value = new joescan::schema::client::ExclusionMaskDataT(*reinterpret_cast<joescan::schema::client::ExclusionMaskDataT *>(u.value));
+      break;
+    }
+    case MessageData_BrightnessCorrectionData: {
+      value = new joescan::schema::client::BrightnessCorrectionDataT(*reinterpret_cast<joescan::schema::client::BrightnessCorrectionDataT *>(u.value));
       break;
     }
     default:
@@ -1750,6 +2096,16 @@ inline void MessageDataUnion::Reset() {
     }
     case MessageData_ProfileRequestData: {
       auto ptr = reinterpret_cast<joescan::schema::client::ProfileRequestDataT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessageData_ExclusionMaskData: {
+      auto ptr = reinterpret_cast<joescan::schema::client::ExclusionMaskDataT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessageData_BrightnessCorrectionData: {
+      auto ptr = reinterpret_cast<joescan::schema::client::BrightnessCorrectionDataT *>(value);
       delete ptr;
       break;
     }

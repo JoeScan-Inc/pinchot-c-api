@@ -17,8 +17,11 @@
 
 #include <fcntl.h>
 #ifdef __linux__
+#include <arpa/inet.h>
 #include <ifaddrs.h>
+#include <netdb.h>
 #include <netinet/tcp.h>
+#include <sys/types.h>
 #include <unistd.h>
 #else
 #include <ws2tcpip.h>
@@ -139,9 +142,11 @@ net_iface NetworkInterface::InitSendSocket(uint32_t ip, uint16_t port)
 void NetworkInterface::CloseSocket(SOCKET sockfd)
 {
 #ifdef __linux__
+  shutdown(sockfd, SHUT_RDWR);
   close(sockfd);
 #else
   int lastError = WSAGetLastError();
+  shutdown(sockfd, SD_BOTH);
   closesocket(sockfd);
   WSASetLastError(lastError);
 #endif
@@ -212,6 +217,48 @@ std::vector<uint32_t> NetworkInterface::GetActiveIpAddresses()
   return ip_addrs;
 }
 
+int NetworkInterface::ResolveIpAddressMDNS(uint32_t serial_number, uint32_t *ip)
+{
+  struct addrinfo hints;
+  uint32_t ip_addr = 0;
+
+  std::memset(&hints, 0, sizeof(hints));
+  // AF_INET means IPv4 only addresses
+  hints.ai_family = AF_INET;
+  hints.ai_flags = AI_NUMERICSERV;
+  hints.ai_socktype = SOCK_DGRAM;
+
+  const std::string port = std::to_string(kScanServerPort);
+  std::string host = "JS-50-" + std::to_string(serial_number) + ".local";
+  struct addrinfo *infoptr = nullptr;
+
+  // TODO: switch to getaddrinfo_a before next release; should provide speedup
+  // and allow us to use a timeout as well.
+  int result = getaddrinfo(host.c_str(), port.c_str(), &hints, &infoptr);
+  if (0 == result) {
+    // resolved IP, extract address
+    struct addrinfo *p;
+    for (p = infoptr; p != NULL; p = p->ai_next) {
+      if (AF_INET == p->ai_family) {
+        struct sockaddr_in *a = reinterpret_cast<sockaddr_in*>(p->ai_addr);
+        struct in_addr *addr = &(a->sin_addr);
+        // this loop is probably overkill, address should be the same each pass
+        ip_addr = htonl(addr->s_addr);
+      }
+    }
+  }
+
+  freeaddrinfo(infoptr);
+
+  if (0 != result) {
+    return -1;
+  }
+
+  *ip = ip_addr;
+
+  return 0;
+}
+
 net_iface NetworkInterface::InitUDPSocket(uint32_t ip, uint16_t port)
 {
   net_iface iface;
@@ -266,29 +313,29 @@ net_iface NetworkInterface::InitTCPSocket(uint32_t ip, uint16_t port,
     throw std::runtime_error(e);
   }
 
-//#ifdef __linux__
-  //struct timeval tv;
-  //tv.tv_sec = timeout_s;
-  //tv.tv_usec = 0;
-//#else
-  //uint32_t tv = timeout_s * 1000;
-//#endif
+#ifdef __linux__
+  struct timeval tv;
+  tv.tv_sec = timeout_s;
+  tv.tv_usec = 0;
+#else
+  uint32_t tv = timeout_s * 1000;
+#endif
 
-  //const char *opt = reinterpret_cast<const char *>(&tv);
+  const char *opt = reinterpret_cast<const char *>(&tv);
 
-  //r = setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, opt, sizeof(tv));
-  //if (0 != r) {
-    //CloseSocket(sockfd);
-    //std::string e = ERROR_STR;
-    //throw std::runtime_error(e);
-  //}
+  r = setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, opt, sizeof(tv));
+  if (0 != r) {
+    CloseSocket(sockfd);
+    std::string e = ERROR_STR;
+    throw std::runtime_error(e);
+  }
 
-  //r = setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, opt, sizeof(tv));
-  //if (0 != r) {
-    //CloseSocket(sockfd);
-    //std::string e = ERROR_STR;
-    //throw std::runtime_error(e);
-  //}
+  r = setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, opt, sizeof(tv));
+  if (0 != r) {
+    CloseSocket(sockfd);
+    std::string e = ERROR_STR;
+    throw std::runtime_error(e);
+  }
 
 
   int one = 1;

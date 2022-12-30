@@ -188,6 +188,9 @@ void ScanManager::RemoveAllScanHeads()
     throw std::runtime_error(error_msg);
   }
 
+  // We copy the serials to a new vector because the function `RemoveScanHead`
+  // will modify class vectors used to hold scan heads; making it difficult
+  // to iterate through vector normally.
   std::vector<uint32_t> serials;
   for (auto &res : m_serial_to_scan_head) {
     serials.push_back(res.first);
@@ -237,7 +240,17 @@ int32_t ScanManager::Connect(uint32_t timeout_s)
 
     for (auto const &pair : m_serial_to_scan_head) {
       ScanHead *sh = pair.second;
+      sh->SendExclusionMask();
+    }
+
+    for (auto const &pair : m_serial_to_scan_head) {
+      ScanHead *sh = pair.second;
       sh->SendWindow();
+    }
+
+    for (auto const &pair : m_serial_to_scan_head) {
+      ScanHead *sh = pair.second;
+      sh->SendBrightnessCorrection();
     }
 
     // get new status messages for each scan head so we can get an accurate
@@ -414,6 +427,9 @@ jsUnits ScanManager::GetUnits() const
 
 void ScanManager::KeepAliveThread()
 {
+  // The server will keep itself scanning as long as it can send profile data
+  // over TCP. This keep alive is really only needed to get scan head's to
+  // recover in the event that they fail to send and go into idle state.
   const uint32_t keep_alive_send_ms = 1000;
 
   while (1) {
@@ -430,136 +446,3 @@ void ScanManager::KeepAliveThread()
     }
   }
 }
-
-#if 0
-// hang onto this code just in case we need it
-std::map<uint32_t, ScanHead*> BroadcastConnect(uint32_t timeout_s);
-
-std::map<uint32_t, ScanHead *> ScanManager::BroadcastConnect(uint32_t timeout_s)
-{
-  using namespace schema::client;
-  std::map<uint32_t, ScanHead *> connected;
-  std::vector<net_iface> ifaces;
-
-  /////////////////////////////////////////////////////////////////////////////
-  // STEP 1: Get all available interfaces.
-  /////////////////////////////////////////////////////////////////////////////
-  {
-    auto ip_addrs = NetworkInterface::GetActiveIpAddresses();
-    for (auto const &ip_addr : ip_addrs) {
-      try {
-        net_iface iface = NetworkInterface::InitBroadcastSocket(ip_addr, 0);
-        ifaces.push_back(iface);
-      } catch (const std::runtime_error &) {
-        // Failed to init socket, continue since there might be other ifaces
-      }
-    }
-
-    if (ifaces.size() == 0) {
-      throw std::runtime_error("No valid broadcast interfaces");
-    }
-  }
-
-  {
-    static const int kConnectPollMs = 500;
-    uint64_t time_start = std::time(nullptr);
-    int32_t timeout_ms = timeout_s * 1000;
-    bool is_connected = false;
-
-    while ((false == is_connected) && (0 < timeout_ms)) {
-      if (connected.size() != m_serial_to_scan_head.size()) {
-        ///////////////////////////////////////////////////////////////////////
-        // STEP 2: Send out BroadcastConnect packet for each scan head.
-        ///////////////////////////////////////////////////////////////////////
-        // spam each network interface with our connection message
-        for (auto const &iface : ifaces) {
-          for (auto const &pair : m_serial_to_scan_head) {
-            uint32_t serial = pair.first;
-            ScanHead *scan_head = pair.second;
-            uint32_t scan_id = scan_head->GetId();
-            uint32_t ip_addr = iface.ip_addr;
-            uint16_t port = scan_head->GetReceivePort();
-
-            // skip sending message to scan heads that are already connected
-            if (connected.find(serial) != connected.end()) {
-              continue;
-            }
-
-            m_builder.Clear();
-            auto data_offset = CreateConnectData(
-              m_builder, scan_head->GetReceivePort(), serial,
-              scan_head->GetId(), ConnectionType_NORMAL);
-            auto msg_offset = CreateMessageClient(
-                m_builder, MessageType_CONNECT, MessageData_ConnectData,
-                data_offset.Union());
-            m_builder.Finish(msg_offset);
-
-            // client will send payload out according to these values
-            SOCKET fd = iface.sockfd;
-            sockaddr_in addr;
-            memset(&addr, 0, sizeof(addr));
-            addr.sin_family = AF_INET;
-            addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-            addr.sin_port = htons(kScanServerPort);
-
-            uint8_t *buf = m_builder.GetBufferPointer();
-            uint32_t size = m_builder.GetSize();
-            int r = sendto(fd, reinterpret_cast<const char *>(buf), size, 0,
-                           reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
-            if (0 >= r) {
-              // failed to send data to interface
-              break;
-            }
-
-            scan_head->ClearStatusMessage();
-          }
-        }
-
-        // still waiting for status messages...
-        std::this_thread::sleep_for(std::chrono::milliseconds(kConnectPollMs));
-        timeout_ms -= kConnectPollMs;
-      } else {
-        is_connected = true;
-      }
-
-      /////////////////////////////////////////////////////////////////////////
-      // STEP 3: See which (if any) scan heads responded.
-      /////////////////////////////////////////////////////////////////////////
-      for (auto const &pair : m_serial_to_scan_head) {
-        uint32_t serial = pair.first;
-        ScanHead *scan_head = pair.second;
-        StatusMessage msg = scan_head->GetLastStatusMessage();
-        uint64_t timestamp = 0;
-
-        // get timestamp where status message was received
-        timestamp = scan_head->GetLastStatusMessage().GetGlobalTime();
-
-        if ((connected.end() == connected.find(serial)) &&
-            (timestamp > time_start)) {
-          VersionInformation client_version;
-          FillVersionInformation(client_version);
-
-          auto scanner_version = msg.GetVersionInformation();
-          if (!VersionInformation::AreVersionsCompatible(client_version,
-                                                         scanner_version)) {
-            throw VersionCompatibilityException(client_version,
-                                                scanner_version);
-          }
-
-          // found an active scan head!
-          connected[serial] = scan_head;
-        }
-      }
-    }
-  }
-
-  /////////////////////////////////////////////////////////////////////////////
-  // STEP 4: Clean up and return.
-  /////////////////////////////////////////////////////////////////////////////
-  for (auto const &iface : ifaces) {
-    NetworkInterface::CloseSocket(iface.sockfd);
-  }
-
-  return connected;
-}
-#endif
