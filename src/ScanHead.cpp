@@ -47,8 +47,8 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
     m_serial_number(discovered.serial_number),
     m_ip_address(discovered.ip_addr),
     m_id(id),
-    m_control_tcp_fd(0),
-    m_data_tcp_fd(0),
+    m_control_tcp_fd(INVALID_SOCKET),
+    m_data_tcp_fd(INVALID_SOCKET),
     m_port(0),
     m_scan_period_us(0),
     m_packets_received(0),
@@ -229,9 +229,9 @@ int ScanHead::Disconnect(void)
   int r = TCPSend(m_builder);
   m_is_receive_thread_active = false;
   NetworkInterface::CloseSocket(m_control_tcp_fd);
-  m_control_tcp_fd = -1;
+  m_control_tcp_fd = INVALID_SOCKET;
   NetworkInterface::CloseSocket(m_data_tcp_fd);
-  m_data_tcp_fd = -1;
+  m_data_tcp_fd = INVALID_SOCKET;
   m_mutex.unlock();
   m_receive_thread.join();
 
@@ -387,7 +387,7 @@ int ScanHead::StopScanning()
 
 bool ScanHead::IsConnected()
 {
-  return (0 < m_control_tcp_fd) ? true : false;
+  return (INVALID_SOCKET != m_control_tcp_fd) ? true : false;
 }
 
 bool ScanHead::IsScanning()

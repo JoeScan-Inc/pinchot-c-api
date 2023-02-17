@@ -147,6 +147,9 @@ class ScanApplication {
       }
       m_scan_heads.push_back(scan_head);
 
+      double a,b,c;
+      r = jsScanHeadGetAlignmentLaser(scan_head, JS_LASER_1, &a, &b, &c);
+
       // We'll use the same configuration here for each scan head.
       r = jsScanHeadSetConfiguration(scan_head, &m_config);
       if (0 > r) {

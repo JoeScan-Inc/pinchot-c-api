@@ -1242,13 +1242,13 @@ int32_t jsScanHeadSetAlignmentLaser(jsScanHead scan_head, jsLaser laser,
 EXPORTED
 int32_t jsScanHeadGetAlignmentLaser(jsScanHead scan_head, jsLaser laser,
                                     double *roll_degrees, double *shift_x,
-                                    double *shift_y, bool *is_cable_downstream)
+                                    double *shift_y)
 {
   int32_t r = 0;
 
   try {
     if ((nullptr == roll_degrees) || (nullptr == shift_x) ||
-        (nullptr == shift_y) || (nullptr == is_cable_downstream)) {
+        (nullptr == shift_y)) {
       return JS_ERROR_NULL_ARGUMENT;
     }
 
