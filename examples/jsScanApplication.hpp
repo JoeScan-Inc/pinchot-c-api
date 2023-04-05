@@ -97,12 +97,24 @@ class ScanApplication {
   
   void SetSerialNumber(std::vector<uint32_t> &serial_numbers)
   {
-    m_serial_numbers = serial_numbers;
+    // Create scan head for each serial number passed in on the command line.
+    for (uint32_t i = 0; i < serial_numbers.size(); i++) {
+      uint32_t serial_number = serial_numbers[i];
+      SetSerialNumber(serial_number);
+    }
   }
 
   void SetSerialNumber(uint32_t serial_number)
   {
-    m_serial_numbers.push_back(serial_number);
+    auto scan_head = jsScanSystemCreateScanHead(m_scan_system,
+                                                serial_number,
+                                                m_scan_heads.size());
+    if (0 > scan_head) {
+      std::string e = "failed to create scan head " +
+                      std::to_string(serial_number);
+      throw ApiError(e.c_str(), scan_head);
+    }
+    m_scan_heads.push_back(scan_head);
   }
 
   void SetLaserOn(uint32_t def_us, uint32_t min_us=0, uint32_t max_us=0)
@@ -138,18 +150,7 @@ class ScanApplication {
     int32_t r = 0;
 
     // Create scan head for each serial number passed in on the command line.
-    for (uint32_t i = 0; i < m_serial_numbers.size(); i++) {
-      uint32_t serial = m_serial_numbers[i];
-      auto scan_head = jsScanSystemCreateScanHead(m_scan_system, serial, i);
-      if (0 > scan_head) {
-        std::string e = "failed to create scan head " + std::to_string(serial);
-        throw ApiError(e.c_str(), scan_head);
-      }
-      m_scan_heads.push_back(scan_head);
-
-      double a,b,c;
-      r = jsScanHeadGetAlignmentLaser(scan_head, JS_LASER_1, &a, &b, &c);
-
+    for (auto &scan_head : m_scan_heads) {
       // We'll use the same configuration here for each scan head.
       r = jsScanHeadSetConfiguration(scan_head, &m_config);
       if (0 > r) {
@@ -532,7 +533,6 @@ class ScanApplication {
 
  private:
   std::thread *m_threads;
-  std::vector<uint32_t> m_serial_numbers;
   std::vector<jsScanHead> m_scan_heads;
   jsScanSystem m_scan_system;
   jsScanHeadConfiguration m_config;

@@ -11,7 +11,6 @@
 #include "BroadcastDiscover.hpp"
 #include "NetworkInterface.hpp"
 #include "NetworkTypes.hpp"
-#include "ProfileBuilder.hpp"
 #include "StatusMessage.hpp"
 
 #include "MessageClient_generated.h"

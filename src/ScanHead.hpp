@@ -16,7 +16,7 @@
 #include "joescan_pinchot.h"
 
 #include "ScanHeadSpecification_generated.h"
-#include "boost/circular_buffer.hpp"
+#include "readerwritercircularbuffer.h"
 #include "flatbuffers/flatbuffers.h"
 
 #include <condition_variable>
@@ -173,16 +173,9 @@ class ScanHead {
    */
   uint32_t WaitUntilAvailableProfiles(uint32_t count, uint32_t timeout_us);
 
-  /**
-   * Obtains up to the number of scanning profiles requested from the scan
-   * head. Note, if the total number of profiles returned from the scan
-   * head is less than what is requested, only the actual number of profiles
-   * available will be returned in the vector.
-   *
-   * @param count The maximum number of profiles to return.
-   * @return Vector holding references to profile data.
-   */
-  std::vector<std::shared_ptr<jsRawProfile>> GetProfiles(uint32_t count);
+
+  int32_t GetProfiles(jsRawProfile *profiles, uint32_t max_profiles);
+  int32_t GetProfiles(jsProfile *profiles, uint32_t max_profiles);
 
   /**
    * Empties the circular buffer used to store received profiles from the
@@ -435,8 +428,7 @@ class ScanHead {
   uint32_t CameraLaserIdxEnd();
   std::pair<jsCamera, jsLaser> CameraLaserNext(uint32_t n);
 
-  void ProcessProfile(uint8_t *buf, uint32_t len);
-  void PushProfile(std::shared_ptr<jsRawProfile>);
+  int ProcessProfile(uint8_t *buf, uint32_t len, jsRawProfile *raw);
   void ReceiveMain();
 
   int TCPSend(flatbuffers::FlatBufferBuilder &builder);
@@ -457,7 +449,14 @@ class ScanHead {
   jsUnits m_units;
   jsCableOrientation m_cable;
 
-  boost::circular_buffer<std::shared_ptr<jsRawProfile>> m_circ_buffer;
+  jsRawProfile m_profiles[kMaxCircularBufferSize];
+  moodycamel::BlockingReaderWriterCircularBuffer<jsRawProfile*>
+    m_free_buffer;
+  moodycamel::BlockingReaderWriterCircularBuffer<jsRawProfile*>
+    m_ready_buffer;
+  std::condition_variable m_new_data_cv;
+  std::mutex m_new_data_mtx;
+
   flatbuffers::FlatBufferBuilder m_builder;
   std::map<std::pair<jsCamera,jsLaser>, AlignmentParams> m_map_alignment;
   std::map<std::pair<jsCamera,jsLaser>,
@@ -467,7 +466,6 @@ class ScanHead {
             m_map_brightness_correction;
   std::map<std::pair<jsCamera,jsLaser>, ScanWindow> m_map_window;
   std::vector<ScanPair> m_scan_pairs;
-  ProfileBuilder m_profile;
   std::condition_variable m_receive_thread_data_sync;
   std::thread m_receive_thread;
   std::mutex m_mutex;
@@ -484,9 +482,6 @@ class ScanHead {
   uint32_t m_scan_period_us;
   uint32_t m_data_type_mask;
   uint32_t m_data_stride;
-  uint64_t m_packets_received;
-  uint32_t m_packets_received_for_profile;
-  uint64_t m_complete_profiles_received;
   uint32_t m_min_ecoder_travel;
   uint64_t m_idle_scan_period_ns;
   int64_t m_last_encoder;

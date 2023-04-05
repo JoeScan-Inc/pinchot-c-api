@@ -29,6 +29,7 @@ class DataPacket {
   DataPacket(uint8_t *bytes, uint32_t num_bytes, uint64_t received_timestamp);
   DataPacket(const DataPacket &other) = default;
 
+  DatagramHeader GetHeader() const;
   uint32_t GetSourceId() const;
   uint8_t GetScanHeadId() const;
   uint32_t GetCameraPort() const;

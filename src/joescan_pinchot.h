@@ -1642,6 +1642,11 @@ EXPORTED int32_t PRE jsScanHeadClearProfiles(
  * `jsScanHeadWaitUntilProfilesAvailable()` before `jScanHeadGetProfiles()` so
  * as to avoid excessive CPU usage.
  *
+ * @note If the internal buffers of the `scan_head` object are filled, reaching
+ * `JS_SCAN_HEAD_PROFILES_MAX`, incoming profiles will be dropped by the API.
+ * Applications sure ensure they are actively reading out profiles or calling
+ * 'jsScanHeadClearProfiles` as needed to clear out old scan data.
+ *
  * @param scan_head Reference to scan head.
  * @param profiles Pointer to memory to store profile data. Note, the memory
  * pointed to by `profiles` must be at least `sizeof(jsProfile) * max` in
@@ -1660,6 +1665,11 @@ EXPORTED int32_t PRE jsScanHeadGetProfiles(
  * @brief Reads `jsRawProfile` formatted profile data from a given scan head.
  * The number of profiles returned is either the max value requested or the
  * total number of profiles ready to be read out, whichever is less.
+ *
+ * @note If the internal buffers of the `scan_head` object are filled, reaching
+ * `JS_SCAN_HEAD_PROFILES_MAX`, incoming profiles will be dropped by the API.
+ * Applications sure ensure they are actively reading out profiles or calling
+ * 'jsScanHeadClearProfiles` as needed to clear out old scan data.
  *
  * @param scan_head Reference to scan head.
  * @param profiles Pointer to memory to store profile data. Note, the memory

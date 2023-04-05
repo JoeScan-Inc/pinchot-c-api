@@ -5,11 +5,12 @@
  * root for license information.
  */
 
-#include "json.hpp"
-#include "NetworkInterface.hpp"
 #include "ScanHead.hpp"
+#include "DataPacket.hpp"
 #include "MessageClient_generated.h"
 #include "MessageServer_generated.h"
+#include "NetworkInterface.hpp"
+#include "NetworkTypes.hpp"
 #include "js50_spec_bin.h"
 
 using namespace joescan;
@@ -39,7 +40,8 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
     m_format(JS_DATA_FORMAT_XY_BRIGHTNESS_FULL),
     m_type(discovered.type),
     m_cable(JS_CABLE_ORIENTATION_UPSTREAM),
-    m_circ_buffer(kMaxCircularBufferSize),
+    m_free_buffer(kMaxCircularBufferSize),
+    m_ready_buffer(kMaxCircularBufferSize),
     m_builder(512),
     m_firmware_version{ discovered.firmware_version_major,
                         discovered.firmware_version_minor,
@@ -51,9 +53,6 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
     m_data_tcp_fd(INVALID_SOCKET),
     m_port(0),
     m_scan_period_us(0),
-    m_packets_received(0),
-    m_packets_received_for_profile(0),
-    m_complete_profiles_received(0),
     m_min_ecoder_travel(0),
     m_idle_scan_period_ns(0),
     m_last_encoder(0),
@@ -110,6 +109,10 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
     m_map_brightness_correction[pair] = correction;
     m_map_exclusion[pair] = exclusion;
     m_map_window[pair] = window;
+  }
+
+  for (uint32_t n = 0; n < kMaxCircularBufferSize; n++) {
+    m_free_buffer.try_enqueue(&m_profiles[n]);
   }
 }
 
@@ -349,11 +352,8 @@ int ScanHead::StartScanning()
   using namespace schema::client;
 
   std::unique_lock<std::mutex> lock(m_mutex);
-  m_profile = ProfileBuilder();
-  m_packets_received = 0;
-  m_complete_profiles_received = 0;
   // reset circular buffer holding profile data
-  m_circ_buffer.clear();
+  ClearProfiles();
 
   m_builder.Clear();
   auto msg_offset =
@@ -772,40 +772,123 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
 
 uint32_t ScanHead::AvailableProfiles()
 {
-  return static_cast<uint32_t>(m_circ_buffer.size());
+  return static_cast<uint32_t>(m_ready_buffer.size_approx());
 }
 
 uint32_t ScanHead::WaitUntilAvailableProfiles(uint32_t count,
                                               uint32_t timeout_us)
 {
+  // std::condition_variable::wait
+  // Atomically unlocks lock, blocks the current executing thread, and adds it
+  // to the list of threads waiting on *this. The thread will be unblocked when
+  // notify_all() or notify_one() is executed. It may also be unblocked
+  // spuriously. When unblocked, regardless of the reason, lock is reacquired
+  // and wait exits.
   std::chrono::duration<uint32_t, std::micro> timeout(timeout_us);
-  std::unique_lock<std::mutex> lock(m_mutex);
-  m_receive_thread_data_sync.wait_for(
-    lock, timeout, [this, count] { return m_circ_buffer.size() >= count; });
-  return static_cast<uint32_t>(m_circ_buffer.size());
+  std::unique_lock<std::mutex> lock(m_new_data_mtx);
+  m_new_data_cv.wait_for(
+    lock, timeout, [this, count] {
+      return m_ready_buffer.size_approx() >= count;
+    }
+  );
+
+  return static_cast<uint32_t>(m_ready_buffer.size_approx());
 }
 
-std::vector<std::shared_ptr<jsRawProfile>> ScanHead::GetProfiles(uint32_t count)
+int32_t ScanHead::GetProfiles(jsRawProfile *profiles, uint32_t max_profiles)
 {
-  std::vector<std::shared_ptr<jsRawProfile>> profiles;
-  std::shared_ptr<jsRawProfile> profile = nullptr;
-  std::lock_guard<std::mutex> lock(m_mutex);
+  jsRawProfile *p;
+  int32_t n = 0;
 
-  while (!m_circ_buffer.empty() && (0 < count)) {
-    profile = m_circ_buffer.front();
-    m_circ_buffer.pop_front();
-
-    profiles.push_back(profile);
-    count--;
+  while (max_profiles--) {
+    if (false == m_ready_buffer.try_dequeue(p)) {
+      break;
+    }
+    profiles[n++] = *p;
+    // this should never fail
+    bool r = m_free_buffer.try_enqueue(p);
+    assert(true == r);
   }
 
-  return profiles;
+  return n;
+}
+
+int32_t ScanHead::GetProfiles(jsProfile *profiles, uint32_t max_profiles)
+{
+  jsRawProfile *p;
+  int32_t n = 0;
+
+  while (max_profiles--) {
+    if (false == m_ready_buffer.try_dequeue(p)) {
+      break;
+    }
+
+    profiles[n].scan_head_id = p->scan_head_id;
+    profiles[n].camera = p->camera;
+    profiles[n].laser = p->laser;
+    profiles[n].timestamp_ns = p->timestamp_ns;
+    profiles[n].flags = p->flags;
+    profiles[n].sequence_number = p->sequence_number;
+    profiles[n].laser_on_time_us = p->laser_on_time_us;
+    profiles[n].format = p->format;
+    profiles[n].packets_received = p->packets_received;
+    profiles[n].packets_expected = p->packets_expected;
+    profiles[n].num_encoder_values = p->num_encoder_values;
+    memcpy(profiles[n].encoder_values, p->encoder_values,
+           p->num_encoder_values * sizeof(uint64_t));
+
+    unsigned int stride = 0;
+    unsigned int len = 0;
+
+    switch (profiles[n].format) {
+      case JS_DATA_FORMAT_XY_BRIGHTNESS_FULL:
+      case JS_DATA_FORMAT_XY_FULL:
+        stride = 1;
+        break;
+      case JS_DATA_FORMAT_XY_BRIGHTNESS_HALF:
+      case JS_DATA_FORMAT_XY_HALF:
+        stride = 2;
+        break;
+      case JS_DATA_FORMAT_XY_BRIGHTNESS_QUARTER:
+      case JS_DATA_FORMAT_XY_QUARTER:
+        stride = 4;
+        break;
+      case JS_DATA_FORMAT_INVALID:
+      default:
+        stride = 0;
+        assert(0 != stride);
+        break;
+    }
+
+    for (unsigned int i = 0; i < p->data_len; i += stride) {
+      if ((JS_PROFILE_DATA_INVALID_XY != p->data[i].x) ||
+          (JS_PROFILE_DATA_INVALID_XY != p->data[i].y)) {
+        // Note: Only need to check X/Y since we only support data types with
+        // X/Y coordinates alone or X/Y coordinates with brightness.
+        profiles[n].data[len++] = p->data[i];
+      }
+    }
+    profiles[n++].data_len = len;
+
+    // this should never fail
+    bool r = m_free_buffer.try_enqueue(p);
+    assert(true == r);
+  }
+
+  return n;
 }
 
 void ScanHead::ClearProfiles()
 {
-  std::lock_guard<std::mutex> lock(m_mutex);
-  m_circ_buffer.clear();
+  jsRawProfile *p;
+
+  do {
+    if (false == m_ready_buffer.try_dequeue(p)) {
+      break;
+    }
+
+    m_free_buffer.try_enqueue(p);
+  } while (1);
 }
 
 int ScanHead::GetStatusMessage(StatusMessage *status)
@@ -1973,42 +2056,69 @@ std::pair<jsCamera, jsLaser> ScanHead::CameraLaserNext(uint32_t idx)
   return std::make_pair(camera, laser);
 }
 
-void ScanHead::ProcessProfile(uint8_t *buf, uint32_t len)
+int ScanHead::ProcessProfile(uint8_t *buf, uint32_t len, jsRawProfile *raw)
 {
-  // private function, assume mutex is already locked
   DataPacket packet(buf, len, 0);
   uint32_t source = 0;
   uint64_t timestamp = 0;
-  uint32_t raw_len = 0;
-  uint8_t *raw = packet.GetRawBytes(&raw_len);
+  uint32_t bytes_len = 0;
+  uint8_t *bytes = packet.GetRawBytes(&bytes_len);
+  const DatagramHeader hdr = packet.GetHeader();
+  const jsCamera camera = CameraPortToId(packet.GetCameraPort());
+  const jsLaser laser = LaserPortToId(packet.GetLaserPort());
   const uint32_t total_packets = packet.GetNumParts();
   const uint32_t current_packet = packet.GetPartNum();
   const uint16_t datatype_mask = packet.GetContents();
 
-  m_packets_received++;
-  source = packet.GetSourceId();
-  timestamp = packet.GetTimeStamp();
+  raw->scan_head_id = hdr.scan_head_id;
+  raw->camera = camera;
+  raw->laser = laser;
+  raw->timestamp_ns = hdr.timestamp_ns;
+  raw->flags = hdr.flags;
+  raw->sequence_number = hdr.sequence_number;
+  raw->laser_on_time_us = hdr.laser_on_time_us;
+  raw->format = m_format;
+  raw->data_len = JS_RAW_PROFILE_DATA_LEN;
+  raw->data_valid_brightness = 0;
+  raw->data_valid_xy = 0;
+  raw->num_encoder_values = 0;
+  // This should always be `1` with when using TCP
+  assert(1 == total_packets);
+  raw->packets_expected = 1;
+  raw->packets_received = 1;
 
-  if ((source != m_profile.Source()) ||
-      (timestamp != m_profile.Timestamp())) {
-    if (false == m_profile.IsEmpty()) {
-      std::unique_lock<std::mutex> lock(m_mutex);
-      // have a partial profile, push it back despite loss
-      m_profile.SetPacketInfo(m_packets_received_for_profile, total_packets);
-      PushProfile(m_profile.raw);
+  auto e = packet.GetEncoderValues();
+  assert(e.size() < JS_ENCODER_MAX);
+  for (uint32_t n = 0; n < e.size(); n++) {
+    raw->encoder_values[n] = e[n];
+    raw->num_encoder_values++;
+  }
+
+  for (uint32_t n = 0; n < JS_RAW_PROFILE_DATA_LEN; n++) {
+    raw->data[n].x = JS_PROFILE_DATA_INVALID_XY;
+    raw->data[n].y = JS_PROFILE_DATA_INVALID_XY;
+    raw->data[n].brightness = JS_PROFILE_DATA_INVALID_BRIGHTNESS;
+  }
+
+  if ((0 < m_min_ecoder_travel) && (0 < raw->num_encoder_values)) {
+    uint32_t travel = std::abs(raw->encoder_values[0] - m_last_encoder);
+    if (travel < m_min_ecoder_travel) {
+      if (0 == m_idle_scan_period_ns) {
+        return -1;
+      }
+
+      uint32_t diff_ns = raw->timestamp_ns - m_last_timestamp;
+      if (diff_ns < m_idle_scan_period_ns) {
+        return -1;
+      }
     }
 
-    m_packets_received_for_profile = 0;
-
-    jsCamera camera = CameraPortToId(packet.GetCameraPort());
-    jsLaser laser = LaserPortToId(packet.GetLaserPort());
-    m_profile = ProfileBuilder(camera, laser, packet, m_format);
+    m_last_encoder = raw->encoder_values[0];
+    m_last_timestamp = raw->timestamp_ns;
   }
 
   // server sends int16_t x/y data points; invalid is int16_t minimum
   const int16_t INVALID_XY = -32768;
-  const jsCamera camera = m_profile.raw->camera;
-  const jsLaser laser = m_profile.raw->laser;
   std::pair<jsCamera, jsLaser> pair(camera, laser);
   AlignmentParams *alignment = &m_map_alignment[pair];
 
@@ -2016,10 +2126,9 @@ void ScanHead::ProcessProfile(uint8_t *buf, uint32_t len)
   if (datatype_mask & DataType::Brightness) {
     FragmentLayout b_layout = packet.GetFragmentLayout(DataType::Brightness);
     FragmentLayout xy_layout = packet.GetFragmentLayout(DataType::XYData);
-    uint8_t *b_src = reinterpret_cast<uint8_t *>(&(raw[b_layout.offset]));
-    int16_t *xy_src = reinterpret_cast<int16_t *>(&(raw[xy_layout.offset]));
+    uint8_t *b_src = reinterpret_cast<uint8_t *>(&(bytes[b_layout.offset]));
+    int16_t *xy_src = reinterpret_cast<int16_t *>(&(bytes[xy_layout.offset]));
     const uint32_t start_column = packet.GetStartColumn();
-    const jsCamera id = m_profile.raw->camera;
 
     // assume step is the same for both layouts
     const uint32_t inc = total_packets * xy_layout.step;
@@ -2036,16 +2145,19 @@ void ScanHead::ProcessProfile(uint8_t *buf, uint32_t len)
         int32_t y = static_cast<int32_t>(y_raw);
 
         Point2D<int32_t> point = alignment->CameraToMill(x, y);
-        m_profile.InsertPointAndBrightness(idx, point, brightness);
+        raw->data[idx].x = point.x;
+        raw->data[idx].y = point.y;
+        raw->data[idx].brightness = brightness;
+        raw->data_valid_xy++;
+        raw->data_valid_brightness++;
       }
 
       idx += inc;
     }
   } else if (datatype_mask & DataType::XYData) {
     FragmentLayout layout = packet.GetFragmentLayout(DataType::XYData);
-    int16_t *src = reinterpret_cast<int16_t *>(&(raw[layout.offset]));
+    int16_t *src = reinterpret_cast<int16_t *>(&(bytes[layout.offset]));
     const uint32_t start_column = packet.GetStartColumn();
-    const jsCamera id = m_profile.raw->camera;
 
     const uint32_t inc = total_packets * layout.step;
     uint32_t idx = start_column + current_packet * layout.step;
@@ -2059,7 +2171,9 @@ void ScanHead::ProcessProfile(uint8_t *buf, uint32_t len)
         int32_t y = static_cast<int32_t>(y_raw);
 
         Point2D<int32_t> point = alignment->CameraToMill(x, y);
-        m_profile.InsertPoint(idx, point);
+        raw->data[idx].x = point.x;
+        raw->data[idx].y = point.y;
+        raw->data_valid_xy++;
       }
 
       idx += inc;
@@ -2075,7 +2189,7 @@ void ScanHead::ProcessProfile(uint8_t *buf, uint32_t len)
     uint16_t pixel = 0;
 
     for (unsigned int j = 0; j < layout.num_vals; j++) {
-      pixel = htons(*(reinterpret_cast<uint16_t *>(&(raw[n]))));
+      pixel = htons(*(reinterpret_cast<uint16_t *>(&(bytes[n]))));
       n += sizeof(uint16_t);
 
       if (kInvalidSubpixel != pixel) {
@@ -2083,45 +2197,13 @@ void ScanHead::ProcessProfile(uint8_t *buf, uint32_t len)
         m += (j * total_packets + current_packet) * layout.step;
 
         Point2D point(pixel, m);
-        m_profile.InsertPixelCoordinate(m, point);
+        // insert subpixel
       }
     }
   }
 #endif
 
-  m_packets_received_for_profile++;
-  if (m_packets_received_for_profile == total_packets) {
-    std::unique_lock<std::mutex> lock(m_mutex);
-    // received all packets for the profile
-    m_profile.SetPacketInfo(total_packets, total_packets);
-    PushProfile(m_profile.raw);
-    m_profile = ProfileBuilder();
-    m_complete_profiles_received++;
-  }
-}
-
-void ScanHead::PushProfile(std::shared_ptr<jsRawProfile> raw)
-{
-  if ((0 < m_min_ecoder_travel) && (0 < raw->num_encoder_values)) {
-    uint32_t travel = std::abs(raw->encoder_values[0] - m_last_encoder);
-    if (travel < m_min_ecoder_travel) {
-      if (0 == m_idle_scan_period_ns) {
-        return;
-      }
-
-      uint32_t diff_ns = raw->timestamp_ns - m_last_timestamp;
-      if (diff_ns < m_idle_scan_period_ns) {
-        return;
-      }
-    } else {
-      m_last_encoder = raw->encoder_values[0];
-    }
-
-    m_last_timestamp = raw->timestamp_ns;
-  }
-
-  m_circ_buffer.push_back(raw);
-  m_receive_thread_data_sync.notify_all();
+  return 0;
 }
 
 void ScanHead::ReceiveMain()
@@ -2198,10 +2280,40 @@ void ScanHead::ReceiveMain()
     }
 
     if (m_is_receive_thread_active) {
-      uint16_t magic = (buf[0] << 8) | (buf[1]);
-      if (kDataMagic == magic) {
-        ProcessProfile(buf, len);
+      const uint16_t magic = (buf[0] << 8) | (buf[1]);
+      if (kDataMagic != magic) {
+        // Not a profile? What could this be?
+        continue;
       }
+
+      // Only process profile data if there is free memory available that can be
+      // used to hold new profile data. If no free memory, skip processing; in
+      // effect, dropping the profile in software.
+      jsRawProfile **p = m_free_buffer.peek();
+      if (nullptr == p) {
+        // User stopped reading out profiles; no free memory available.
+        continue;
+      }
+
+      jsRawProfile *raw = *p;
+      r = ProcessProfile(buf, r, raw);
+      if (0 != r) {
+        // Failed to process; skip adding profile to user read queue. Don't pop;
+        // we will reuse the memory for the next profile.
+        continue;
+      }
+
+      // Profile is good and holds new data; pop it from the free queue. This
+      // call should never fail since we just had successful `peek()` earlier.
+      m_free_buffer.try_pop();
+      // Send new profile over to queue for user to read out.
+      m_ready_buffer.try_enqueue(raw);
+      // std::condition_variable::notify_all:
+      // The notifying thread does not need to hold the lock on the same mutex
+      // as the one held by the waiting thread(s); in fact doing so is a
+      // pessimization, since the notified thread would immediately block again,
+      // waiting for the notifying thread to release the lock.
+      m_new_data_cv.notify_all();
     }
   }
 }

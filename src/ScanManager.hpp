@@ -10,7 +10,6 @@
 
 #include "AlignmentParams.hpp"
 #include "PhaseTable.hpp"
-#include "ProfileBuilder.hpp"
 #include "joescan_pinchot.h"
 
 #include <condition_variable>

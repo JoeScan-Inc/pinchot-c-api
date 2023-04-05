@@ -29,31 +29,6 @@ using namespace joescan;
 static std::map<uint32_t, ScanManager*> _uid_to_scan_manager;
 static int _network_init_count = 0;
 
-static unsigned int _data_format_to_stride(jsDataFormat fmt)
-{
-  unsigned int stride = 0;
-
-  switch (fmt) {
-    case JS_DATA_FORMAT_INVALID:
-      stride = 0;
-      break;
-    case JS_DATA_FORMAT_XY_BRIGHTNESS_FULL:
-    case JS_DATA_FORMAT_XY_FULL:
-      stride = 1;
-      break;
-    case JS_DATA_FORMAT_XY_BRIGHTNESS_HALF:
-    case JS_DATA_FORMAT_XY_HALF:
-      stride = 2;
-      break;
-    case JS_DATA_FORMAT_XY_BRIGHTNESS_QUARTER:
-    case JS_DATA_FORMAT_XY_QUARTER:
-      stride = 4;
-      break;
-  }
-
-  return stride;
-}
-
 static ScanManager *_get_scan_manager_object(jsScanSystem scan_system)
 {
   uint32_t uid = scan_system & 0xFFFFFFFF;
@@ -1904,17 +1879,7 @@ int32_t jsScanHeadGetRawProfiles(jsScanHead scan_head, jsRawProfile *profiles,
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
-    auto p = sh->GetProfiles(static_cast<int>(max_profiles));
-    uint32_t total = (max_profiles < static_cast<uint32_t>(p.size()))
-                       ? max_profiles
-                       : static_cast<uint32_t>(p.size());
-    for (uint32_t n = 0; n < total; n++) {
-      // `ScanHead` returns vector of shared pointers; dereference to copy
-      profiles[n] = *p[n];
-    }
-
-    // return number of profiles copied
-    r = static_cast<int32_t>(total);
+    r = sh->GetProfiles(profiles, max_profiles);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1939,40 +1904,7 @@ int32_t jsScanHeadGetProfiles(jsScanHead scan_head, jsProfile *profiles,
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
-    auto p = sh->GetProfiles(static_cast<int>(max_profiles));
-    uint32_t total = (max_profiles < static_cast<uint32_t>(p.size()))
-                       ? max_profiles
-                       : static_cast<uint32_t>(p.size());
-
-    for (uint32_t m = 0; m < total; m++) {
-      profiles[m].scan_head_id = p[m]->scan_head_id;
-      profiles[m].camera = p[m]->camera;
-      profiles[m].laser = p[m]->laser;
-      profiles[m].timestamp_ns = p[m]->timestamp_ns;
-      profiles[m].flags = p[m]->flags;
-      profiles[m].sequence_number = p[m]->sequence_number;
-      profiles[m].laser_on_time_us = p[m]->laser_on_time_us;
-      profiles[m].format = p[m]->format;
-      profiles[m].packets_received = p[m]->packets_received;
-      profiles[m].packets_expected = p[m]->packets_expected;
-      profiles[m].num_encoder_values = p[m]->num_encoder_values;
-      memcpy(profiles[m].encoder_values, p[m]->encoder_values,
-             p[m]->num_encoder_values * sizeof(uint64_t));
-
-      unsigned int stride = _data_format_to_stride(profiles[m].format);
-      unsigned int len = 0;
-      for (unsigned int n = 0; n < p[m]->data_len; n += stride) {
-        if ((JS_PROFILE_DATA_INVALID_XY != p[m]->data[n].x) ||
-            (JS_PROFILE_DATA_INVALID_XY != p[m]->data[n].y)) {
-          // Note: Only need to check X/Y since we only support data types with
-          // X/Y coordinates alone or X/Y coordinates with brightness.
-          profiles[m].data[len++] = p[m]->data[n];
-        }
-      }
-      profiles[m].data_len = len;
-    }
-    // return number of profiles copied
-    r = static_cast<int32_t>(total);
+    r = sh->GetProfiles(profiles, max_profiles);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;

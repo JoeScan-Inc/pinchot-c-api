@@ -93,6 +93,11 @@ DataPacket::DataPacket(uint8_t *bytes, uint32_t num_bytes,
   }
 }
 
+DatagramHeader DataPacket::GetHeader() const
+{
+  return m_hdr;
+}
+
 uint32_t DataPacket::GetSourceId() const
 {
   return (m_hdr.scan_head_id << 16) | (m_hdr.camera_port << 8) |
