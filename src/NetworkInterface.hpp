@@ -8,45 +8,56 @@
 #ifndef JOESCAN_NETWORK_INTERFACE_H
 #define JOESCAN_NETWORK_INTERFACE_H
 
+
 #include <cstdint>
+#include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
 
 #include "NetworkIncludes.hpp"
+#include "flatbuffers/flatbuffers.h"
 
 namespace joescan {
-/**
- * @brief The `net_iface` struct is a container struct that helps group
- * data relating to a network interface.
- */
-struct net_iface {
-  SOCKET sockfd;
-  uint32_t ip_addr;
-  uint16_t port;
-};
 
-/**
- * @brief The `NetworkInterface` class provides operating system agnostic
- * calls for creating socket interfaces used by the client code.
- */
 class NetworkInterface {
  public:
-  static void InitSystem(void);
-  static void FreeSystem(void);
-  static net_iface InitBroadcastSocket(uint32_t ip, uint16_t port);
-  static net_iface InitRecvSocket(uint32_t ip, uint16_t port);
-  static net_iface InitSendSocket(uint32_t ip, uint16_t port);
-  static net_iface InitTCPSocket(uint32_t ip, uint16_t port,
-                                 uint32_t timeout_s);
-  static void CloseSocket(SOCKET sockfd);
+  /** @brief Struct used to hold client network interface values. */
+  struct Client {
+    std::string name;
+    uint32_t ip_addr;
+    uint32_t net_mask;
+  };
 
-  static std::vector<uint32_t> GetActiveIpAddresses();
+  NetworkInterface();
+  ~NetworkInterface();
+
   static int ResolveIpAddressMDNS(uint32_t serial_number, uint32_t *ip);
+  static uint32_t parseIPV4string(char* ip_str);
+  static std::vector<Client> GetClientInterfaces();
+
+  void Open();
+  void Close();
+  bool IsOpen();
+
+ protected:
+  /**
+   * @brief The `net_iface` struct is a container struct that helps group
+   * data relating to a network interface.
+   */
+  struct net_iface {
+    SOCKET sockfd;
+    uint32_t ip_addr;
+    uint16_t port;
+  };
+
+  net_iface m_iface;
 
  private:
-  static net_iface InitUDPSocket(uint32_t ip, uint16_t port);
-  // The OS buffer size in bytes for a UDP data socket connection.
-  static const int kRecvSocketBufferSize = 0x400000;
+  static std::mutex m_mutex;
+  static int m_ref_count;
 };
+
 } // namespace joescan
 
 #endif

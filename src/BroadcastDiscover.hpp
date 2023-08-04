@@ -1,18 +1,21 @@
 #ifndef _JOESCAN_BROADCAST_DISCOVER_H
 #define _JOESCAN_BROADCAST_DISCOVER_H
 
+// TODO: replace strerror with strerror_s
+#define _CRT_SECURE_NO_WARNINGS
+
 #ifndef NO_PINCHOT_INTERFACE
 #include <map>
 #include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include "joescan_pinchot.h"
-#include "BroadcastDiscover.hpp"
-#include "NetworkInterface.hpp"
 #include "MessageDiscoveryClient_generated.h"
 #include "MessageDiscoveryServer_generated.h"
+#include "UDPBroadcastSocket.hpp"
 #include "Version.hpp"
 #endif
 
@@ -34,24 +37,24 @@ static int32_t BroadcastDiscover(
   std::map<uint32_t, std::shared_ptr<jsDiscovered>> &discovered)
 {
   using namespace schema::client;
-  std::vector<net_iface> ifaces;
+  auto ifaces = NetworkInterface::GetClientInterfaces();
+  std::vector<std::unique_ptr<UDPBroadcastSocket>> sockets;
 
   /////////////////////////////////////////////////////////////////////////////
   // STEP 1: Get all available interfaces.
   /////////////////////////////////////////////////////////////////////////////
   {
-    const uint16_t port = 0;
-    auto ip_addrs = NetworkInterface::GetActiveIpAddresses();
-    for (auto const &ip_addr : ip_addrs) {
+    for (auto const &iface : ifaces) {
       try {
-        net_iface iface = NetworkInterface::InitBroadcastSocket(ip_addr, port);
-        ifaces.push_back(iface);
+        std::unique_ptr<UDPBroadcastSocket> sock(
+          new UDPBroadcastSocket(iface.ip_addr));
+        sockets.push_back(std::move(sock));
       } catch (const std::runtime_error &) {
-        // Failed to init socket, continue since there might be other ifaces
+        // Failed to init socket, continue with other sockets
       }
     }
 
-    if (ifaces.size() == 0) {
+    if (sockets.size() == 0) {
       return JS_ERROR_NETWORK;
     }
   }
@@ -72,21 +75,9 @@ static int32_t BroadcastDiscover(
 
     // spam each network interface with our discover message
     int sendto_count = 0;
-    for (auto const &iface : ifaces) {
-      uint32_t ip_addr = iface.ip_addr;
-      SOCKET fd = iface.sockfd;
-
-      sockaddr_in addr;
-      memset(&addr, 0, sizeof(addr));
-      addr.sin_family = AF_INET;
-      addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-      addr.sin_port = htons(kBroadcastDiscoverPort);
-
-      uint8_t *buf = builder.GetBufferPointer();
-      uint32_t size = builder.GetSize();
-      int r = sendto(fd, reinterpret_cast<const char *>(buf), size, 0,
-                     reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
-      if (0 < r) {
+    for (auto const &socket : sockets) {
+      int r = socket->Send(kBroadcastDiscoverPort, builder);
+      if (0 == r) {
         // sendto succeeded in sending message through interface
         sendto_count++;
       }
@@ -108,12 +99,14 @@ static int32_t BroadcastDiscover(
     using namespace schema::server;
     const uint32_t buf_len = 128;
     uint8_t *buf = new uint8_t[buf_len];
+    uint32_t n = 0;
 
-    for (auto const &iface : ifaces) {
-      SOCKET fd = iface.sockfd;
+    for (auto const &socket : sockets) {
+      // Get interface associated with socket; used for `jsDiscovered` struct
+      NetworkInterface::Client iface = ifaces[n++];
 
       do {
-        int r = recv(fd, reinterpret_cast<char *>(buf), buf_len, 0);
+        int r = socket->Read(buf, buf_len);
         if (0 >= r) {
           break;
         }
@@ -131,25 +124,32 @@ static int32_t BroadcastDiscover(
 
         auto result = std::make_shared<jsDiscovered>();
         result->serial_number = msg->serial_number;
-        result->ip_addr = msg->ip_server;
-        result->link_speed_mbps = msg->link_speed_mbps;
         result->type = (jsScanHeadType) msg->type;
         result->firmware_version_major = msg->version_major;
         result->firmware_version_minor = msg->version_minor;
         result->firmware_version_patch = msg->version_patch;
-        strncpy(result->type_str,
-                msg->type_str.c_str(),
-                JS_SCAN_HEAD_TYPE_STR_MAX_LEN - 1);
+        result->ip_addr = msg->ip_server;
+        result->client_ip_addr = iface.ip_addr;
+        result->client_netmask = iface.net_mask;
+        result->link_speed_mbps = msg->link_speed_mbps;
+
+        size_t len = 0;
+
+        len = iface.name.copy(
+          result->client_name_str,
+          JS_CLIENT_NAME_STR_MAX_LEN - 1);
+        result->client_name_str[len] = 0;
+
+        len = msg->type_str.copy(
+          result->type_str,
+          JS_SCAN_HEAD_TYPE_STR_MAX_LEN - 1);
+        result->type_str[len] = 0;
 
         discovered[msg->serial_number] = result;
       } while (1);
     }
 
     delete[] buf;
-  }
-
-  for (auto const &iface : ifaces) {
-    NetworkInterface::CloseSocket(iface.sockfd);
   }
 
   return 0;

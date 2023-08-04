@@ -8,7 +8,7 @@
 #ifndef JOESCAN_SCAN_HEAD_H
 #define JOESCAN_SCAN_HEAD_H
 
-#include "NetworkInterface.hpp"
+#include "TCPSocket.hpp"
 #include "ScanManager.hpp"
 #include "ScanWindow.hpp"
 #include "StatusMessage.hpp"
@@ -445,6 +445,10 @@ class ScanHead {
   jsScanHeadConfiguration m_config_default;
   jsScanHeadConfiguration m_config;
   jsDataFormat m_format;
+
+  std::unique_ptr<TCPSocket> m_sock_ctrl;
+  std::unique_ptr<TCPSocket> m_sock_data;
+
   jsScanHeadType m_type;
   jsUnits m_units;
   jsCableOrientation m_cable;
@@ -473,9 +477,9 @@ class ScanHead {
   SemanticVersion m_firmware_version;
   uint32_t m_serial_number;
   uint32_t m_ip_address;
+  std::string m_client_name;
+  uint32_t m_client_ip_address;
   uint32_t m_id;
-  SOCKET m_control_tcp_fd;
-  SOCKET m_data_tcp_fd;
   int m_port;
   uint8_t *m_packet_buf;
   uint32_t m_packet_buf_len;
@@ -486,7 +490,6 @@ class ScanHead {
   uint64_t m_idle_scan_period_ns;
   int64_t m_last_encoder;
   uint64_t m_last_timestamp;
-  bool m_is_receive_thread_active;
   bool m_is_scanning;
 };
 } // namespace joescan

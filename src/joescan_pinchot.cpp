@@ -160,7 +160,7 @@ EXPORTED
 int32_t jsPowerCycleScanHead(uint32_t serial_number)
 {
   constexpr uint16_t kUpdatePort = 21232;
-  uint32_t ip_addr = 0;
+  std::unique_ptr<TCPSocket> tcp;
 
   try {
     // First check if the head can be discovered.
@@ -169,19 +169,27 @@ int32_t jsPowerCycleScanHead(uint32_t serial_number)
     if (serial_to_discovered.find(serial_number) ==
         serial_to_discovered.end()) {
       // Failed to find in BroadcastDiscover, try again using MDNS
+      uint32_t ip_addr = 0;
       r = NetworkInterface::ResolveIpAddressMDNS(serial_number, &ip_addr);
       if (0 != r) {
         return JS_ERROR_NOT_DISCOVERED;
       }
+      // MDNS doesn't give us the network interface it was discovered on. We'll
+      // have to hope the operating system can route correctly.
+      tcp = std::unique_ptr<TCPSocket>(
+              new TCPSocket(ip_addr, kUpdatePort, 10));
     } else {
       auto discovered = serial_to_discovered[serial_number];
-      ip_addr = discovered->ip_addr;
+      // Scan head was discovered and we know what network interface to use.
+      tcp = std::unique_ptr<TCPSocket>(
+              new TCPSocket(discovered->client_name_str,
+                            discovered->client_ip_addr,
+                            discovered->ip_addr,
+                            kUpdatePort,
+                            10));
     }
 
-    auto iface = NetworkInterface::InitTCPSocket(ip_addr, kUpdatePort, 10);
-
     using namespace joescan::schema::update::client;
-
     flatbuffers::FlatBufferBuilder builder(0x20);
 
     builder.Clear();
@@ -189,20 +197,9 @@ int32_t jsPowerCycleScanHead(uint32_t serial_number)
                                           MessageData_NONE);
     builder.Finish(msg_offset);
 
-    char *msg = reinterpret_cast<char *>(builder.GetBufferPointer());
-    uint32_t msg_len = builder.GetSize();
-
-    // NOTE: sending little-endian as to keep with approach used by Flatbuffers
-    r = send(iface.sockfd,
-             reinterpret_cast<char *>(&msg_len),
-             sizeof(uint32_t), 0);
-    if (sizeof(uint32_t) != r) {
-      return JS_ERROR_INTERNAL;
-    }
-
-    r = send(iface.sockfd, msg, msg_len, 0);
-    if (r != static_cast<int>(builder.GetSize())) {
-      return JS_ERROR_INTERNAL;
+    r = tcp->Send(builder);
+    if (0 > r) {
+      return r;
     }
   } catch (std::exception &e) {
     (void)e;
@@ -222,16 +219,6 @@ jsScanSystem jsScanSystemCreate(jsUnits units)
   }
 
   try {
-    if (0 == _network_init_count) {
-      // We need to explicitly initialze the network interface first thing.
-      // This is crucial for Windows since it has some extra start up code that
-      // should always be done first thing in the application to ensure that
-      // networking works.
-      // TODO: this could probably be moved...
-      NetworkInterface::InitSystem();
-      _network_init_count++;
-    }
-
     ScanManager *manager = new ScanManager(units);
     _uid_to_scan_manager[manager->GetUID()] = manager;
     scan_system = _get_jsScanSystem(manager);
@@ -262,15 +249,6 @@ void jsScanSystemFree(jsScanSystem scan_system)
 
     _uid_to_scan_manager.erase(manager->GetUID());
     delete manager;
-  } catch (std::exception &e) {
-    (void)e;
-  }
-
-  try {
-    if (0 != _network_init_count) {
-      NetworkInterface::FreeSystem();
-      _network_init_count--;
-    }
   } catch (std::exception &e) {
     (void)e;
   }

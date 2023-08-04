@@ -33,9 +33,9 @@ static const int kMaxFramePayload = 1468;
 static const int kTcpSendBufferSize = 4194304;
 
 /// The port used to send commands to the server running on the scan head.
-static const uint16_t kScanServerPort = 12346;
+static const uint16_t kScanServerCtrlPort = 12346;
 /// The port used to send scan data to the client
-static const uint16_t kScanServerStreamingTcpPort = 12348;
+static const uint16_t kScanServerDataPort = 12348;
 /// Identifier for Status message from scan server.
 static const uint16_t kResponseMagic = 0xFACE;
 /// Identifier for Data Packet message from scan server.

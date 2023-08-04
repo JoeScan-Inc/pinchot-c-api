@@ -8,9 +8,19 @@
 #ifndef JOESCAN_NETWORK_INCLUDES_H
 #define JOESCAN_NETWORK_INCLUDES_H
 
+#define NETWORK_TRACE \
+  (std::string(__FILE__) + ":" + std::to_string(__LINE__) + " " + \
+   strerror(errno));
+
 #ifdef __linux__
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <netinet/tcp.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
 // Windows specific includes missing in Linux
 #ifndef SOCKET
 #define SOCKET int
@@ -32,6 +42,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
 #endif
 
 #endif

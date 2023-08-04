@@ -43,6 +43,8 @@ typedef int64_t jsScanHead;
 enum jsConstants {
   /** @brief Maximum string length of JS-50 scan head. */
   JS_SCAN_HEAD_TYPE_STR_MAX_LEN = 32,
+  /** @brief Maximum string length of client network interface name. */
+  JS_CLIENT_NAME_STR_MAX_LEN = 128,
   /** @brief Maximum number of columns of scan data captured by the camera. */
   JS_SCAN_HEAD_DATA_COLUMNS_MAX_LEN = 1456,
   /** @brief Array length of data reserved for a profile. */
@@ -240,10 +242,11 @@ typedef enum {
  * the network.
  */
 typedef struct {
+  /** @brief Serial number of scan head. */
   uint32_t serial_number;
-  uint32_t ip_addr;
-  uint32_t link_speed_mbps;
+  /** @brief Enumerated type of scan head. */
   jsScanHeadType type;
+  /** @brief Null terminated string of scan head type. */
   char type_str[JS_SCAN_HEAD_TYPE_STR_MAX_LEN];
   /** @brief Firmware major version number of the scan head. */
   uint32_t firmware_version_major;
@@ -251,6 +254,16 @@ typedef struct {
   uint32_t firmware_version_minor;
   /** @brief Firmware patch version number of the scan head. */
   uint32_t firmware_version_patch;
+  /** @brief IP address of scan head. */
+  uint32_t ip_addr;
+  /** @brief Name of the client interface scan head was discovered on. */
+  char client_name_str[JS_CLIENT_NAME_STR_MAX_LEN];
+  /** @brief IP address of the client interface scan head was discovered on. */
+  uint32_t client_ip_addr;
+  /** @brief Netmask of the client interface scan head was discovered on. */
+  uint32_t client_netmask;
+  /** @brief Link speed in megabits per second between client and scan head. */
+  uint32_t link_speed_mbps;
 } jsDiscovered;
 
 /**

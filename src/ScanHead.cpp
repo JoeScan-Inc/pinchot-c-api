@@ -38,6 +38,8 @@ using namespace joescan;
 ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
   : m_scan_manager(manager),
     m_format(JS_DATA_FORMAT_XY_BRIGHTNESS_FULL),
+    m_sock_ctrl(nullptr),
+    m_sock_data(nullptr),
     m_type(discovered.type),
     m_cable(JS_CABLE_ORIENTATION_UPSTREAM),
     m_free_buffer(kMaxCircularBufferSize),
@@ -48,16 +50,15 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
                         discovered.firmware_version_patch },
     m_serial_number(discovered.serial_number),
     m_ip_address(discovered.ip_addr),
+    m_client_name(discovered.client_name_str),
+    m_client_ip_address(discovered.client_ip_addr),
     m_id(id),
-    m_control_tcp_fd(INVALID_SOCKET),
-    m_data_tcp_fd(INVALID_SOCKET),
     m_port(0),
     m_scan_period_us(0),
     m_min_ecoder_travel(0),
     m_idle_scan_period_ns(0),
     m_last_encoder(0),
     m_last_timestamp(0),
-    m_is_receive_thread_active(false),
     m_is_scanning(false)
 {
   m_units = m_scan_manager.GetUnits();
@@ -177,22 +178,9 @@ int ScanHead::Connect(uint32_t timeout_s)
   int r = 0;
 
   m_mutex.lock();
-  {
-    net_iface iface =
-      NetworkInterface::InitTCPSocket(m_ip_address, kScanServerPort, timeout_s);
-    m_control_tcp_fd = iface.sockfd;
-  }
-
-  {
-    net_iface iface =
-      NetworkInterface::InitTCPSocket(m_ip_address, 12348, timeout_s);
-    m_data_tcp_fd = iface.sockfd;
-  }
-
-  m_is_receive_thread_active = true;
-  std::thread receive_thread(&ScanHead::ReceiveMain, this);
-  m_receive_thread = std::move(receive_thread);
-
+  m_sock_ctrl = std::unique_ptr<TCPSocket>(
+                  new TCPSocket(m_client_name, m_client_ip_address,
+                                m_ip_address, kScanServerCtrlPort, timeout_s));
   m_builder.Clear();
   auto data_offset =
     CreateConnectData(m_builder, m_serial_number, m_id, ConnectionType_NORMAL);
@@ -201,7 +189,7 @@ int ScanHead::Connect(uint32_t timeout_s)
                         data_offset.Union());
   m_builder.Finish(msg_offset);
 
-  r = TCPSend(m_builder);
+  r = m_sock_ctrl->Send(m_builder);
   if (0 != r) {
     m_mutex.unlock();
     return r;
@@ -229,14 +217,9 @@ int ScanHead::Disconnect(void)
   auto msg_offset =
     CreateMessageClient(m_builder, MessageType_DISCONNECT, MessageData_NONE);
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
-  m_is_receive_thread_active = false;
-  NetworkInterface::CloseSocket(m_control_tcp_fd);
-  m_control_tcp_fd = INVALID_SOCKET;
-  NetworkInterface::CloseSocket(m_data_tcp_fd);
-  m_data_tcp_fd = INVALID_SOCKET;
+  int r = m_sock_ctrl->Send(m_builder);
+  m_sock_ctrl->Close();
   m_mutex.unlock();
-  m_receive_thread.join();
 
   return r;
 }
@@ -328,7 +311,7 @@ int ScanHead::SendScanConfiguration()
     CreateMessageClient(m_builder, MessageType_SCAN_CONFIGURATION,
                         MessageData_ScanConfigurationData, data_offset.Union());
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
+  int r = m_sock_ctrl->Send(m_builder);
 
   return r;
 }
@@ -342,7 +325,7 @@ int ScanHead::SendKeepAlive()
   auto msg_offset =
     CreateMessageClient(m_builder, MessageType_KEEP_ALIVE, MessageData_NONE);
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
+  int r = m_sock_ctrl->Send(m_builder);
 
   return r;
 }
@@ -359,10 +342,14 @@ int ScanHead::StartScanning()
   auto msg_offset =
     CreateMessageClient(m_builder, MessageType_SCAN_START, MessageData_NONE);
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
-
+  int r = m_sock_ctrl->Send(m_builder);
   if (0 == r) {
+    m_sock_data = std::unique_ptr<TCPSocket>(
+                    new TCPSocket(m_client_name, m_client_ip_address,
+                                  m_ip_address, kScanServerDataPort));
     m_is_scanning = true;
+    std::thread receive_thread(&ScanHead::ReceiveMain, this);
+    m_receive_thread = std::move(receive_thread);
   }
 
   return r;
@@ -371,23 +358,31 @@ int ScanHead::StartScanning()
 int ScanHead::StopScanning()
 {
   using namespace schema::client;
-  std::unique_lock<std::mutex> lock(m_mutex);
+
+  m_mutex.lock();
   m_builder.Clear();
   auto msg_offset =
     CreateMessageClient(m_builder, MessageType_SCAN_STOP, MessageData_NONE);
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
+  int r = m_sock_ctrl->Send(m_builder);
 
-  if (0 == r) {
-    m_is_scanning = false;
-  }
+  m_is_scanning = false;
+  m_sock_data->Close();
+  m_mutex.unlock();
+
+  m_receive_thread.join();
 
   return r;
 }
 
 bool ScanHead::IsConnected()
 {
-  return (INVALID_SOCKET != m_control_tcp_fd) ? true : false;
+  // TODO: fix, grab status message
+  if (nullptr == m_sock_ctrl) {
+    return false;
+  }
+
+  return m_sock_ctrl->IsOpen();
 }
 
 bool ScanHead::IsScanning()
@@ -498,7 +493,7 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
       CreateMessageClient(m_builder, MessageType_IMAGE_REQUEST,
                           MessageData_ImageRequestData, data_offset.Union());
     m_builder.Finish(msg_offset);
-    int r = TCPSend(m_builder);
+    int r = m_sock_ctrl->Send(m_builder);
     if (0 > r) {
       return r;
     }
@@ -517,15 +512,10 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
     uint8_t *dst = &buf[0];
     uint32_t size = 0;
 
-    do {
-      int r = TCPRead(dst, len, &size, m_control_tcp_fd);
-      if (0 > r) {
-        return r;
-      }
-      // total length of buffer remaining at new offset
-      len -= r;
-      dst += r;
-    } while (0 != size);
+    int r = m_sock_ctrl->Read(&buf[0], buf_len);
+    if ((0 > r) || (0 == r)) {
+      return JS_ERROR_NETWORK;
+    }
 
     // total length of data read out
     len = buf_len - len;
@@ -671,7 +661,7 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
       CreateMessageClient(m_builder, MessageType_PROFILE_REQUEST,
                           MessageData_ProfileRequestData, data_offset.Union());
     m_builder.Finish(msg_offset);
-    int r = TCPSend(m_builder);
+    int r = m_sock_ctrl->Send(m_builder);
     if(0 > r) {
       return r;
     }
@@ -686,14 +676,10 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
     uint8_t *dst = &buf[0];
     uint32_t size = 0;
 
-    do {
-      int r = TCPRead(dst, len, &size, m_control_tcp_fd);
-      if (0 > r) {
-        return r;
-      }
-      len -= r;
-      dst += r;
-    } while (0 != size);
+    int r = m_sock_ctrl->Read(&buf[0], buf_len);
+    if ((0 > r) || (0 == r)) {
+      return JS_ERROR_NETWORK;
+    }
 
     len = buf_len - len;
     auto verifier = flatbuffers::Verifier(&buf[0], len);
@@ -745,7 +731,7 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
       auto point = points->Get(n);
       int16_t x_raw = point->x();
       int16_t y_raw = point->y();
-      uint8_t brightness = point->brightness();
+      uint8_t brightness = static_cast<uint8_t>(point->brightness());
 
       if ((INVALID_XY != x_raw) && (INVALID_XY != y_raw)) {
         int32_t x = static_cast<int32_t>(x_raw);
@@ -914,14 +900,14 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
 
     m_builder.Finish(msg_offset);
 
-    r = TCPSend(m_builder);
+    r = m_sock_ctrl->Send(m_builder);
     if (0 != r) {
       return r;
     }
 
-    r = TCPRead(buf, buf_len, m_control_tcp_fd);
-    if (0 > r) {
-      return r;
+    r = m_sock_ctrl->Read(&buf[0], buf_len);
+    if ((0 > r) || (0 == r)) {
+      return JS_ERROR_NETWORK;
     }
   }
 
@@ -961,7 +947,8 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
       }
     }
 
-    m_status.user.num_encoder_values = data->encoders.size();
+    m_status.user.num_encoder_values =
+      static_cast<uint32_t>(data->encoders.size());
     std::copy(data->encoders.begin(), data->encoders.end(),
               m_status.user.encoder_values);
 
@@ -1391,7 +1378,7 @@ int32_t ScanHead::SetMinimumEncoderTravel(uint32_t travel)
 
 uint32_t ScanHead::GetIdleScanPeriod()
 {
-  return m_idle_scan_period_ns / 1000;
+  return static_cast<uint32_t>(m_idle_scan_period_ns / 1000);
 }
 
 int32_t ScanHead::SetIdleScanPeriod(uint32_t period_us)
@@ -1674,7 +1661,7 @@ int ScanHead::SendExclusionMask(jsCamera camera, jsLaser laser)
     CreateMessageClient(m_builder, MessageType_EXCLUSION_MASK,
                         MessageData_ExclusionMaskData, data_offset.Union());
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
+  int r = m_sock_ctrl->Send(m_builder);
   if(0 > r) {
     return r;
   }
@@ -1767,7 +1754,7 @@ int ScanHead::SendBrightnessCorrection(jsCamera camera, jsLaser laser)
                         MessageData_BrightnessCorrectionData,
                         data_offset.Union());
   m_builder.Finish(msg_offset);
-  int r = TCPSend(m_builder);
+  int r = m_sock_ctrl->Send(m_builder);
   if(0 > r) {
     return r;
   }
@@ -1952,7 +1939,7 @@ int ScanHead::SendWindow(jsCamera camera, jsLaser laser)
     m_builder, MessageType_WINDOW_CONFIGURATION,
     MessageData_WindowConfigurationData, data_offset.Union());
   m_builder.Finish(msg_offset);
-  r = TCPSend(m_builder);
+  r = m_sock_ctrl->Send(m_builder);
   if (0 != r) {
     return r;
   }
@@ -2101,13 +2088,14 @@ int ScanHead::ProcessProfile(uint8_t *buf, uint32_t len, jsRawProfile *raw)
   }
 
   if ((0 < m_min_ecoder_travel) && (0 < raw->num_encoder_values)) {
-    uint32_t travel = std::abs(raw->encoder_values[0] - m_last_encoder);
+    uint32_t travel = static_cast<uint32_t>(
+      std::abs(raw->encoder_values[0] - m_last_encoder));
     if (travel < m_min_ecoder_travel) {
       if (0 == m_idle_scan_period_ns) {
         return -1;
       }
 
-      uint32_t diff_ns = raw->timestamp_ns - m_last_timestamp;
+      uint64_t diff_ns = raw->timestamp_ns - m_last_timestamp;
       if (diff_ns < m_idle_scan_period_ns) {
         return -1;
       }
@@ -2209,182 +2197,66 @@ int ScanHead::ProcessProfile(uint8_t *buf, uint32_t len, jsRawProfile *raw)
 void ScanHead::ReceiveMain()
 {
 #ifndef __linux__
-  // bump up thread priority; receiving profiles is the most important thing
-  // for end users
+  // Bump up thread priority; receiving profiles is the most important thing
+  // for end users.
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
 #endif
 
-  while (m_is_receive_thread_active) {
+  while (m_is_scanning) {
     uint8_t *buf = m_packet_buf;
-#ifdef __linux__
-    size_t buf_len = m_packet_buf_len;
-#else
-    int buf_len = m_packet_buf_len;
-#endif
-
-    uint32_t total_len = 0;
-    char *dst = reinterpret_cast<char *>(&total_len);
+    uint32_t buf_len = m_packet_buf_len;
     int r = 0;
 
-    uint32_t len = 0;
-    while (m_is_receive_thread_active && (len < sizeof(uint32_t))) {
-      r = recv(m_data_tcp_fd, dst + len, sizeof(uint32_t) - len, 0);
-      if (0 > r) {
-        if (!m_is_receive_thread_active) {
-          return;
-        }
-
-        if ((errno == EAGAIN) || (errno == EINTR) || (errno == 0)) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-          continue;
-        }
-
-        throw std::runtime_error("Recv " + std::to_string(errno) + " " +
-                                 std::strerror(errno));
-      }
-      else if (0 == r) {
-          // connection closed
-          return;
-      }
-      else {
-          len += r;
-      }
-    }
-    if (total_len > m_packet_buf_len) {
-      throw std::runtime_error("Recv Out of Sync Requested " +
-                                std::to_string(total_len) + " bytes");
+    r = m_sock_data->Read(buf, buf_len, &m_is_scanning);
+    if ((0 == r) || (!m_is_scanning)) {
+      // Connection closed or commanded to stop; stop the thread.
+      return;
     }
 
-    len = 0;
-    while (m_is_receive_thread_active && (len < total_len)) {
-      dst = reinterpret_cast<char*>(buf + len);
-      r = recv(m_data_tcp_fd, dst, total_len - len, 0);
-      if (0 > r) {
-        if (!m_is_receive_thread_active) {
-          return;
-        }
-
-        if ((errno == EAGAIN) || (errno == EINTR) || (errno == 0)) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(10));
-          continue;
-        }
-
-        throw std::runtime_error("Recv " + std::to_string(errno) + " " +
-                                 std::strerror(errno));
-      } else if (0 == r) {
-        // connection closed
-        return;
-      } else {
-        len += r;
-      }
+    if (0 > r) {
+      // If we get in this state, we're in real trouble; assume irrecoverable.
+      assert(0 <= r);
+      return;
     }
 
-    if (m_is_receive_thread_active) {
-      const uint16_t magic = (buf[0] << 8) | (buf[1]);
-      if (kDataMagic != magic) {
-        // Not a profile? What could this be?
-        continue;
-      }
-
-      // Only process profile data if there is free memory available that can be
-      // used to hold new profile data. If no free memory, skip processing; in
-      // effect, dropping the profile in software.
-      jsRawProfile **p = m_free_buffer.peek();
-      if (nullptr == p) {
-        // User stopped reading out profiles; no free memory available.
-        continue;
-      }
-
-      jsRawProfile *raw = *p;
-      r = ProcessProfile(buf, r, raw);
-      if (0 != r) {
-        // Failed to process; skip adding profile to user read queue. Don't pop;
-        // we will reuse the memory for the next profile.
-        continue;
-      }
-
-      // Profile is good and holds new data; pop it from the free queue. This
-      // call should never fail since we just had successful `peek()` earlier.
-      m_free_buffer.try_pop();
-      // Send new profile over to queue for user to read out.
-      m_ready_buffer.try_enqueue(raw);
-      // std::condition_variable::notify_all:
-      // The notifying thread does not need to hold the lock on the same mutex
-      // as the one held by the waiting thread(s); in fact doing so is a
-      // pessimization, since the notified thread would immediately block again,
-      // waiting for the notifying thread to release the lock.
-      m_new_data_cv.notify_all();
+    const uint16_t magic = (buf[0] << 8) | (buf[1]);
+    if (kDataMagic != magic) {
+      // Not a profile? What could this be?
+      continue;
     }
-  }
-}
 
-int ScanHead::TCPSend(flatbuffers::FlatBufferBuilder &builder)
-{
-  // private function, assume mutex is already locked
-  char *msg = reinterpret_cast<char *>(builder.GetBufferPointer());
-  uint32_t msg_len = builder.GetSize();
-  SOCKET fd = m_control_tcp_fd;
-  int r = 0;
-
-  // NOTE: sending little-endian as to keep with approach used by Flatbuffers
-  r = send(fd, reinterpret_cast<char *>(&msg_len), sizeof(uint32_t), 0);
-  if (sizeof(uint32_t) != r) {
-    return JS_ERROR_INTERNAL;
-  }
-
-  r = send(fd, msg, msg_len, 0);
-  if (r != static_cast<int>(builder.GetSize())) {
-    return JS_ERROR_INTERNAL;
-  }
-
-  return 0;
-}
-
-int ScanHead::TCPRead(uint8_t *buf, uint32_t len, SOCKET fd)
-{
-  uint32_t msg_len = 0;
-  int r = 0;
-
-  // NOTE: receiving little-endian as to keep with approach used by Flatbuffers
-  r = recv(fd, reinterpret_cast<char *>(&msg_len), sizeof(uint32_t), 0);
-  if (sizeof(uint32_t) != r) {
-    return JS_ERROR_INTERNAL;
-  }
-
-  assert(msg_len < len);
-
-  r = recv(fd, reinterpret_cast<char *>(buf), msg_len, 0);
-  if (static_cast<int>(msg_len) != r) {
-    return JS_ERROR_INTERNAL;
-  }
-
-  return r;
-}
-
-int ScanHead::TCPRead(uint8_t *buf, uint32_t len, uint32_t *unread_len, SOCKET fd)
-{
-  uint32_t msg_len = *unread_len;
-  int r = 0;
-
-  if (0 == msg_len) {
-    // NOTE: receiving little-endian as to keep with approach used by
-    // Flatbuffers
-    r = recv(fd, reinterpret_cast<char *>(&msg_len), sizeof(uint32_t), 0);
-    if (sizeof(uint32_t) != r) {
-      return JS_ERROR_INTERNAL;
+    // Only process profile data if there is free memory available that can be
+    // used to hold new profile data. If no free memory, skip processing; in
+    // effect, dropping the profile in software.
+    jsRawProfile **p = m_free_buffer.peek();
+    if (nullptr == p) {
+      // User stopped reading out profiles; no free memory available.
+      continue;
     }
-    assert(msg_len < len);
-    *unread_len = msg_len;
+
+    jsRawProfile *raw = *p;
+    r = ProcessProfile(buf, r, raw);
+    if (0 != r) {
+      // Failed to process; skip adding profile to user read queue. Don't pop;
+      // we will reuse the memory for the next profile.
+      continue;
+    }
+
+    // Profile is good and holds new data; pop it from the free queue. This
+    // call should never fail since we just had successful `peek()` earlier.
+    m_free_buffer.try_pop();
+    // Send new profile over to queue for user to read out.
+    m_ready_buffer.try_enqueue(raw);
+    // std::condition_variable::notify_all:
+    // The notifying thread does not need to hold the lock on the same mutex as
+    // the one held by the waiting thread(s); in fact doing so is a
+    // pessimization, since the notified thread would immediately block again,
+    // waiting for the notifying thread to release the lock.
+    m_new_data_cv.notify_all();
   }
 
-  r = recv(fd, reinterpret_cast<char *>(buf), msg_len, 0);
-  if (0 > r) {
-    return JS_ERROR_INTERNAL;
-  }
-
-  *unread_len = msg_len - r;
-
-  return r;
+  // Final notify in case user is in `jsScanHeadWaitUntilProfilesAvailable()`.
+  m_new_data_cv.notify_all();
 }
 
 jsCamera ScanHead::CameraPortToId(uint32_t port)
@@ -2406,7 +2278,8 @@ int32_t ScanHead::CameraIdToPort(jsCamera camera)
   }
 
   // assumes that the position in the array indicates the port
-  return it - m_spec.camera_port_to_id.begin();
+  return static_cast<int32_t>(
+    it - m_spec.camera_port_to_id.begin());
 }
 
 jsLaser ScanHead::LaserPortToId(uint32_t port)
@@ -2427,5 +2300,6 @@ int32_t ScanHead::LaserIdToPort(jsLaser laser)
   }
 
   // assumes that the position in the array indicates the port
-  return it - m_spec.laser_port_to_id.begin();
+  return static_cast<int32_t>(
+    it - m_spec.laser_port_to_id.begin());
 }
