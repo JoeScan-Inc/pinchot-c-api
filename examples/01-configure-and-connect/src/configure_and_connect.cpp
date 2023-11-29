@@ -85,6 +85,12 @@ void PrintScanHeadInfo(jsScanHead scan_head)
     case (JS_SCAN_HEAD_JS50MX):
       std::cout << "JS-50 MX";
       break;
+    case (JS_SCAN_HEAD_JS50Z820):
+      std::cout << "JS-50 Z820";
+      break;
+    case (JS_SCAN_HEAD_JS50Z830):
+      std::cout << "JS-50 Z830";
+      break;
     case (JS_SCAN_HEAD_INVALID_TYPE):
     default:
       std::cout << "Invalid";

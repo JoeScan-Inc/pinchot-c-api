@@ -92,7 +92,7 @@ int UDPSocket::Read(uint8_t *buf, uint32_t len) const
   int nfds;
   int r;
 
-  nfds = fd + 1;
+  nfds = (int) fd + 1;
   FD_ZERO(&rfds);
   FD_SET(fd, &rfds);
   tv.tv_sec = m_timeout_s;

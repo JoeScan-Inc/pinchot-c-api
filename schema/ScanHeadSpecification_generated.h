@@ -93,6 +93,9 @@ struct ScanHeadSpecificationT : public flatbuffers::NativeTable {
   joescan::schema::client::ConfigurationGroupPrimary configuration_group_primary = joescan::schema::client::ConfigurationGroupPrimary_INVALID;
   uint32_t max_configuration_groups = 0;
   uint32_t camera_port_cable_upstream = 0;
+  uint32_t version_min_major = 0;
+  uint32_t version_min_minor = 0;
+  uint32_t version_min_patch = 0;
 };
 
 struct ScanHeadSpecification FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -115,7 +118,10 @@ struct ScanHeadSpecification FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_CONFIGURATION_GROUPS = 30,
     VT_CONFIGURATION_GROUP_PRIMARY = 32,
     VT_MAX_CONFIGURATION_GROUPS = 34,
-    VT_CAMERA_PORT_CABLE_UPSTREAM = 36
+    VT_CAMERA_PORT_CABLE_UPSTREAM = 36,
+    VT_VERSION_MIN_MAJOR = 38,
+    VT_VERSION_MIN_MINOR = 40,
+    VT_VERSION_MIN_PATCH = 42
   };
   const flatbuffers::String *product_str() const {
     return GetPointer<const flatbuffers::String *>(VT_PRODUCT_STR);
@@ -168,6 +174,15 @@ struct ScanHeadSpecification FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
   uint32_t camera_port_cable_upstream() const {
     return GetField<uint32_t>(VT_CAMERA_PORT_CABLE_UPSTREAM, 0);
   }
+  uint32_t version_min_major() const {
+    return GetField<uint32_t>(VT_VERSION_MIN_MAJOR, 0);
+  }
+  uint32_t version_min_minor() const {
+    return GetField<uint32_t>(VT_VERSION_MIN_MINOR, 0);
+  }
+  uint32_t version_min_patch() const {
+    return GetField<uint32_t>(VT_VERSION_MIN_PATCH, 0);
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_PRODUCT_STR) &&
@@ -191,6 +206,9 @@ struct ScanHeadSpecification FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
            VerifyField<uint8_t>(verifier, VT_CONFIGURATION_GROUP_PRIMARY) &&
            VerifyField<uint32_t>(verifier, VT_MAX_CONFIGURATION_GROUPS) &&
            VerifyField<uint32_t>(verifier, VT_CAMERA_PORT_CABLE_UPSTREAM) &&
+           VerifyField<uint32_t>(verifier, VT_VERSION_MIN_MAJOR) &&
+           VerifyField<uint32_t>(verifier, VT_VERSION_MIN_MINOR) &&
+           VerifyField<uint32_t>(verifier, VT_VERSION_MIN_PATCH) &&
            verifier.EndTable();
   }
   ScanHeadSpecificationT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -253,6 +271,15 @@ struct ScanHeadSpecificationBuilder {
   void add_camera_port_cable_upstream(uint32_t camera_port_cable_upstream) {
     fbb_.AddElement<uint32_t>(ScanHeadSpecification::VT_CAMERA_PORT_CABLE_UPSTREAM, camera_port_cable_upstream, 0);
   }
+  void add_version_min_major(uint32_t version_min_major) {
+    fbb_.AddElement<uint32_t>(ScanHeadSpecification::VT_VERSION_MIN_MAJOR, version_min_major, 0);
+  }
+  void add_version_min_minor(uint32_t version_min_minor) {
+    fbb_.AddElement<uint32_t>(ScanHeadSpecification::VT_VERSION_MIN_MINOR, version_min_minor, 0);
+  }
+  void add_version_min_patch(uint32_t version_min_patch) {
+    fbb_.AddElement<uint32_t>(ScanHeadSpecification::VT_VERSION_MIN_PATCH, version_min_patch, 0);
+  }
   explicit ScanHeadSpecificationBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -282,8 +309,14 @@ inline flatbuffers::Offset<ScanHeadSpecification> CreateScanHeadSpecification(
     flatbuffers::Offset<flatbuffers::Vector<const joescan::schema::client::ConfigurationGroup *>> configuration_groups = 0,
     joescan::schema::client::ConfigurationGroupPrimary configuration_group_primary = joescan::schema::client::ConfigurationGroupPrimary_INVALID,
     uint32_t max_configuration_groups = 0,
-    uint32_t camera_port_cable_upstream = 0) {
+    uint32_t camera_port_cable_upstream = 0,
+    uint32_t version_min_major = 0,
+    uint32_t version_min_minor = 0,
+    uint32_t version_min_patch = 0) {
   ScanHeadSpecificationBuilder builder_(_fbb);
+  builder_.add_version_min_patch(version_min_patch);
+  builder_.add_version_min_minor(version_min_minor);
+  builder_.add_version_min_major(version_min_major);
   builder_.add_camera_port_cable_upstream(camera_port_cable_upstream);
   builder_.add_max_configuration_groups(max_configuration_groups);
   builder_.add_configuration_groups(configuration_groups);
@@ -322,7 +355,10 @@ inline flatbuffers::Offset<ScanHeadSpecification> CreateScanHeadSpecificationDir
     const std::vector<joescan::schema::client::ConfigurationGroup> *configuration_groups = nullptr,
     joescan::schema::client::ConfigurationGroupPrimary configuration_group_primary = joescan::schema::client::ConfigurationGroupPrimary_INVALID,
     uint32_t max_configuration_groups = 0,
-    uint32_t camera_port_cable_upstream = 0) {
+    uint32_t camera_port_cable_upstream = 0,
+    uint32_t version_min_major = 0,
+    uint32_t version_min_minor = 0,
+    uint32_t version_min_patch = 0) {
   auto product_str__ = product_str ? _fbb.CreateString(product_str) : 0;
   auto camera_port_to_id__ = camera_port_to_id ? _fbb.CreateVector<uint32_t>(*camera_port_to_id) : 0;
   auto laser_port_to_id__ = laser_port_to_id ? _fbb.CreateVector<uint32_t>(*laser_port_to_id) : 0;
@@ -345,7 +381,10 @@ inline flatbuffers::Offset<ScanHeadSpecification> CreateScanHeadSpecificationDir
       configuration_groups__,
       configuration_group_primary,
       max_configuration_groups,
-      camera_port_cable_upstream);
+      camera_port_cable_upstream,
+      version_min_major,
+      version_min_minor,
+      version_min_patch);
 }
 
 flatbuffers::Offset<ScanHeadSpecification> CreateScanHeadSpecification(flatbuffers::FlatBufferBuilder &_fbb, const ScanHeadSpecificationT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -376,6 +415,9 @@ inline void ScanHeadSpecification::UnPackTo(ScanHeadSpecificationT *_o, const fl
   { auto _e = configuration_group_primary(); _o->configuration_group_primary = _e; }
   { auto _e = max_configuration_groups(); _o->max_configuration_groups = _e; }
   { auto _e = camera_port_cable_upstream(); _o->camera_port_cable_upstream = _e; }
+  { auto _e = version_min_major(); _o->version_min_major = _e; }
+  { auto _e = version_min_minor(); _o->version_min_minor = _e; }
+  { auto _e = version_min_patch(); _o->version_min_patch = _e; }
 }
 
 inline flatbuffers::Offset<ScanHeadSpecification> ScanHeadSpecification::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanHeadSpecificationT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -403,6 +445,9 @@ inline flatbuffers::Offset<ScanHeadSpecification> CreateScanHeadSpecification(fl
   auto _configuration_group_primary = _o->configuration_group_primary;
   auto _max_configuration_groups = _o->max_configuration_groups;
   auto _camera_port_cable_upstream = _o->camera_port_cable_upstream;
+  auto _version_min_major = _o->version_min_major;
+  auto _version_min_minor = _o->version_min_minor;
+  auto _version_min_patch = _o->version_min_patch;
   return joescan::schema::client::CreateScanHeadSpecification(
       _fbb,
       _product_str,
@@ -421,7 +466,10 @@ inline flatbuffers::Offset<ScanHeadSpecification> CreateScanHeadSpecification(fl
       _configuration_groups,
       _configuration_group_primary,
       _max_configuration_groups,
-      _camera_port_cable_upstream);
+      _camera_port_cable_upstream,
+      _version_min_major,
+      _version_min_minor,
+      _version_min_patch);
 }
 
 inline const joescan::schema::client::ScanHeadSpecification *GetScanHeadSpecification(const void *buf) {

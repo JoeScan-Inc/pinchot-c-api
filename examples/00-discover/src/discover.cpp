@@ -50,19 +50,20 @@ void PrintApiVersion()
 }
 
 /**
- * @brief Display the capabilities of a scan head to console output.
+ * @brief Convert integer network value to string.
  *
- * @param c Struct holding the scan head capabilities.
+ * @param ip network value as integer.
+ * @return Network value as string.
  */
-static std::string IpToString(uint32_t ip)
+static std::string NetToString(uint32_t net)
 {
-  std::stringstream ipstream;
-  ipstream << static_cast<uint32_t>(ip >> 24) << "."
-           << static_cast<uint32_t>((ip >> 16) & 0xff) << "."
-           << static_cast<uint32_t>((ip >> 8) & 0xff) << "."
-           << static_cast<uint32_t>(ip & 0xff);
+  std::stringstream ss;
+  ss << static_cast<uint32_t>(net >> 24) << "."
+     << static_cast<uint32_t>((net >> 16) & 0xff) << "."
+     << static_cast<uint32_t>((net >> 8) & 0xff) << "."
+     << static_cast<uint32_t>(net & 0xff);
 
-  return ipstream.str();
+  return ss.str();
 }
 
 /**
@@ -77,7 +78,10 @@ void PrintScanHeadDiscovered(jsDiscovered &d)
   std::cout << "  Firmware v" << d.firmware_version_major << "."
                               << d.firmware_version_minor << "."
                               << d.firmware_version_patch << "\n";
-  std::cout << "  IP Address " << IpToString(d.ip_addr) << "\n";
+  std::cout << "  IP Address " << NetToString(d.ip_addr) << "\n";
+  std::cout << "  Client Interface " << d.client_name_str << "\n";
+  std::cout << "  Client IP Address " << NetToString(d.client_ip_addr) << "\n";
+  std::cout << "  Client Netmask " << NetToString(d.client_netmask) << "\n";
   std::cout << "  Link Speed " << d.link_speed_mbps << "Mbps" << std::endl;
 }
 

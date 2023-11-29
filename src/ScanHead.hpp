@@ -8,14 +8,17 @@
 #ifndef JOESCAN_SCAN_HEAD_H
 #define JOESCAN_SCAN_HEAD_H
 
+#include "DataPacket.hpp"
+#include "DynamicData.hpp"
+#include "ProfileQueue.hpp"
 #include "TCPSocket.hpp"
 #include "ScanManager.hpp"
+#include "ScanHeadModel.hpp"
 #include "ScanWindow.hpp"
 #include "StatusMessage.hpp"
 #include "Version.hpp"
 #include "joescan_pinchot.h"
 
-#include "ScanHeadSpecification_generated.h"
 #include "readerwritercircularbuffer.h"
 #include "flatbuffers/flatbuffers.h"
 
@@ -28,6 +31,9 @@
 #include <vector>
 
 namespace joescan {
+
+// forward declaration
+class CameraLaserIterator;
 
 class ScanHead {
  public:
@@ -105,9 +111,21 @@ class ScanHead {
   /**
    * Performs client request to scan head to configure scan parameters.
    *
+   * @param period_us The scan period in microseconds
+   * @param fmt The format of scan data to receive
+   *
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
-  int SendScanConfiguration();
+  int SendScanConfiguration(uint32_t period_us, jsDataFormat fmt,
+                            bool is_frame_scanning);
+
+  /**
+   * Performs client request to scan head to configure alignment values
+   * 
+   * @return `0` on success, negative value mapping to `jsError` on error.
+   *
+  */
+ int SendScanAlignmentValue();
 
   /**
    * Sends Keep Alive message to the scan head.
@@ -119,9 +137,13 @@ class ScanHead {
   /**
    * Performs client request to the scan head to start scanning.
    *
+   * @param start_time_ns The global time to have the scan head start scanning.
+   * Empty argument will leave the scan head to determine it's own time to
+   * start.
+   *
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
-  int StartScanning();
+  int StartScanning(uint64_t start_time_ns, bool is_frame_scanning);
 
   /**
    * Performs client request to the scan head to stop scanning.
@@ -129,6 +151,10 @@ class ScanHead {
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
   int StopScanning();
+
+  int SendBrightnessCorrection();
+  int SendExclusionMask();
+  int SendWindow();
 
   /**
    * Returns boolean confirming connection of the client to the scan head.
@@ -173,16 +199,6 @@ class ScanHead {
    */
   uint32_t WaitUntilAvailableProfiles(uint32_t count, uint32_t timeout_us);
 
-
-  int32_t GetProfiles(jsRawProfile *profiles, uint32_t max_profiles);
-  int32_t GetProfiles(jsProfile *profiles, uint32_t max_profiles);
-
-  /**
-   * Empties the circular buffer used to store received profiles from the
-   * scan head.
-   */
-  void ClearProfiles();
-
   /**
    * Requests a new status message from the scan head.
    *
@@ -209,6 +225,9 @@ class ScanHead {
    * @return Reference to `ScanManager` object.
    */
   ScanManager &GetScanManager();
+
+  ProfileQueue *GetProfileQueue();
+  CameraLaserIterator GetPairIterator();
 
   /**
    * Verifies a given `jsScanHeadConfiguration` to ensure it is valid and can
@@ -241,36 +260,6 @@ class ScanHead {
   jsScanHeadConfiguration GetConfigurationDefault() const;
 
   /**
-   * Sets the data format for scanning of the scan head.
-   *
-   * @param fmt The format of scan data to request.
-   * @return `0` on success, negative value mapping to `jsError` on error.
-   */
-  int SetDataFormat(jsDataFormat format);
-
-  /**
-   * Gets the data format for scanning of the scan head.
-   *
-   * @return The format of scan data requested.
-   */
-  jsDataFormat GetDataFormat() const;
-
-  /**
-   * Sets the period in microseconds by which new data is generated.
-   *
-   * @param period_us The scan period in microseconds.
-   * @return Zero on success, negative value on error.
-   */
-  int SetScanPeriod(uint32_t period_us);
-
-  /**
-   * Gets the period in microseconds by which new data is generated.
-   *
-   * @return The period in microseconds.
-   */
-  uint32_t GetScanPeriod() const;
-
-  /**
    * Gets the minimum period in microseconds that the `ScanHead` can be
    * commanded to scan at.
    *
@@ -285,6 +274,7 @@ class ScanHead {
 
   jsCamera GetPairedCamera(jsLaser laser);
   jsLaser GetPairedLaser(jsCamera camera);
+  uint32_t GetCameraLaserPairCount();
 
   /**
    * Adds a new camera / laser pair within the `ScanHead` to be configured for
@@ -332,9 +322,6 @@ class ScanHead {
   int SetExclusionMask(jsLaser laser, jsExclusionMask *mask);
   int GetExclusionMask(jsCamera camera, jsExclusionMask *mask);
   int GetExclusionMask(jsLaser laser, jsExclusionMask *mask);
-  int SendExclusionMask();
-  int SendExclusionMask(jsCamera camera);
-  int SendExclusionMask(jsLaser laser);
 
   int SetBrightnessCorrection(jsCamera camera,
                               jsBrightnessCorrection_BETA *correction);
@@ -344,9 +331,6 @@ class ScanHead {
                               jsBrightnessCorrection_BETA *correction);
   int GetBrightnessCorrection(jsLaser laser,
                               jsBrightnessCorrection_BETA *correction);
-  int SendBrightnessCorrection();
-  int SendBrightnessCorrection(jsCamera camera);
-  int SendBrightnessCorrection(jsLaser laser);
 
   uint32_t GetMinimumEncoderTravel();
   int32_t SetMinimumEncoderTravel(uint32_t travel);
@@ -354,6 +338,7 @@ class ScanHead {
   uint32_t GetIdleScanPeriod();
   int32_t SetIdleScanPeriod(uint32_t period_us);
 
+  uint32_t GetLastSequenceNumber();
   /**
    * Sets the window to be used for scanning with the scan head.
    *
@@ -362,23 +347,17 @@ class ScanHead {
   int SetWindow(ScanWindow &window);
   int SetWindow(jsCamera camera, ScanWindow &window);
   int SetWindow(jsLaser laser, ScanWindow &window);
-  int SendWindow();
-  int SendWindow(jsCamera camera);
-  int SendWindow(jsLaser laser);
-
   int SetPolygonWindow(jsCoordinate *points, uint32_t points_len);
   int SetPolygonWindow(jsCamera camera, jsCoordinate *points,
                        uint32_t points_len);
   int SetPolygonWindow(jsLaser laser, jsCoordinate *points,
                        uint32_t points_len);
 
-  int GetWindow(jsCamera camera, ScanWindow *window);
-  int GetWindow(jsLaser laser, ScanWindow *window);
+  bool IsDirty();
+  void ClearDirty();
 
- private:
-  bool IsPairValid(jsCamera camera, jsLaser laser);
-  bool IsCameraValid(jsCamera camera);
-  bool IsLaserValid(jsLaser laser);
+ protected:
+  friend CameraLaserIterator;
 
   int SetAlignment(jsCamera camera, jsLaser laser, double roll_degrees,
                    double shift_x, double shift_y);
@@ -398,9 +377,6 @@ class ScanHead {
   int SendWindow(jsCamera camera, jsLaser laser);
   int SetPolygonWindow(jsCamera camera, jsLaser laser, jsCoordinate *points,
                        uint32_t points_len);
-  int GetWindow(jsCamera camera, jsLaser laser, ScanWindow *window);
-
-  typedef joescan::schema::client::ScanHeadSpecificationT ScanHeadSpec;
 
   struct ScanPair {
     jsCamera camera;
@@ -409,7 +385,6 @@ class ScanHead {
     uint32_t end_offset_us;
   };
 
-  static const int kMaxCircularBufferSize = JS_SCAN_HEAD_PROFILES_MAX;
   // The JS-50 theoretical max packet size is 8k plus header, in reality the
   // max size is 1456 * 4 + header. Using 6k.
   static const int kMaxPacketSize = 61440;
@@ -418,80 +393,43 @@ class ScanHead {
   // Port used to access REST interface
   static const uint32_t kRESTport = 8080;
 
-  static const uint32_t kMaxAverageIntensity = 255;
-  static const uint32_t kMaxSaturationPercentage = 100;
-  static const uint32_t kMaxSaturationThreshold = 1023;
-  static const uint32_t kMaxLaserDetectionThreshold = 1023;
-
-  void LoadScanHeadSpecification(jsScanHeadType type, ScanHeadSpec *spec);
-  uint32_t CameraLaserIdxBegin();
-  uint32_t CameraLaserIdxEnd();
-  std::pair<jsCamera, jsLaser> CameraLaserNext(uint32_t n);
-
-  int ProcessProfile(uint8_t *buf, uint32_t len, jsRawProfile *raw);
-  void ReceiveMain();
-
-  int TCPSend(flatbuffers::FlatBufferBuilder &builder);
-  int TCPRead(uint8_t *buf, uint32_t len, SOCKET fd);
-  int TCPRead(uint8_t *buf, uint32_t len, uint32_t *size, SOCKET fd);
-  int32_t CameraIdToPort(jsCamera camera);
-  jsCamera CameraPortToId(uint32_t port);
-  int32_t LaserIdToPort(jsLaser laser);
-  jsLaser LaserPortToId(uint32_t port);
+  int ProcessProfile(DataPacket *packet, jsRawProfile *raw);
+  void ThreadScanningReceive();
 
   ScanManager &m_scan_manager;
-  ScanHeadSpec m_spec;
+  ScanHeadModel m_model;
   StatusMessage m_status;
-  jsScanHeadConfiguration m_config_default;
-  jsScanHeadConfiguration m_config;
+  ProfileQueue m_profiles;
   jsDataFormat m_format;
 
   std::unique_ptr<TCPSocket> m_sock_ctrl;
-  std::unique_ptr<TCPSocket> m_sock_data;
-
-  jsScanHeadType m_type;
-  jsUnits m_units;
-  jsCableOrientation m_cable;
-
-  jsRawProfile m_profiles[kMaxCircularBufferSize];
-  moodycamel::BlockingReaderWriterCircularBuffer<jsRawProfile*>
-    m_free_buffer;
-  moodycamel::BlockingReaderWriterCircularBuffer<jsRawProfile*>
-    m_ready_buffer;
-  std::condition_variable m_new_data_cv;
-  std::mutex m_new_data_mtx;
+  std::unique_ptr<DynamicData> m_data;
+  std::vector<ScanPair> m_scan_pairs;
 
   flatbuffers::FlatBufferBuilder m_builder;
-  std::map<std::pair<jsCamera,jsLaser>, AlignmentParams> m_map_alignment;
-  std::map<std::pair<jsCamera,jsLaser>,
-           std::shared_ptr<jsExclusionMask>> m_map_exclusion;
-  std::map<std::pair<jsCamera,jsLaser>,
-           std::shared_ptr<jsBrightnessCorrection_BETA>>
-            m_map_brightness_correction;
-  std::map<std::pair<jsCamera,jsLaser>, ScanWindow> m_map_window;
-  std::vector<ScanPair> m_scan_pairs;
-  std::condition_variable m_receive_thread_data_sync;
+
+  std::condition_variable m_new_data_cv;
+  std::mutex m_new_data_mtx;
   std::thread m_receive_thread;
   std::mutex m_mutex;
 
   SemanticVersion m_firmware_version;
-  uint32_t m_serial_number;
   uint32_t m_ip_address;
   std::string m_client_name;
   uint32_t m_client_ip_address;
-  uint32_t m_id;
-  int m_port;
   uint8_t *m_packet_buf;
   uint32_t m_packet_buf_len;
   uint32_t m_scan_period_us;
-  uint32_t m_data_type_mask;
-  uint32_t m_data_stride;
   uint32_t m_min_ecoder_travel;
   uint64_t m_idle_scan_period_ns;
   int64_t m_last_encoder;
   uint64_t m_last_timestamp;
+  uint32_t m_last_sequence;
+  volatile bool m_is_receive_thread_active;
+  bool m_is_frame_scanning;
   bool m_is_scanning;
 };
+
 } // namespace joescan
 
 #endif // JOESCAN_SCAN_HEAD_H

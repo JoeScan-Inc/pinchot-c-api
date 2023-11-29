@@ -10,6 +10,7 @@
 
 #include "AlignmentParams.hpp"
 #include "PhaseTable.hpp"
+#include "ScanSync.hpp"
 #include "joescan_pinchot.h"
 
 #include <condition_variable>
@@ -26,7 +27,7 @@ class ScanManager {
   /**
    * @brief Creates a new scan manager object;
    */
-  ScanManager(jsUnits units);
+  ScanManager(jsUnits units, ScanSync *scansync);
 
   /**
    * @brief Destructor for the `ScanManager` object.
@@ -143,9 +144,17 @@ class ScanManager {
    *
    * @param period_us Scan period in microseconds.
    * @param fmt The data format of scan data.
+   * @param is_frame_scanning Set to `true` to enable frame scanning
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
-  int StartScanning(uint32_t period_us, jsDataFormat fmt);
+  int StartScanning(uint32_t period_us, jsDataFormat fmt,
+                    bool is_frame_scanning=false);
+
+  uint32_t GetProfilesPerFrame();
+  int32_t WaitUntilFrameAvailable(uint32_t timeout_us);
+  int32_t GetFrame(jsProfile *profiles);
+  int32_t GetFrame(jsRawProfile *profiles);
+  int32_t ClearFrames();
 
   /**
    * @brief Stop scanning on all `ScanHead` objects that were told to scan
@@ -154,6 +163,13 @@ class ScanManager {
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
   int32_t StopScanning();
+
+  /**
+   * @brief Sends configuration data to all the scan heads.
+   *
+   * @return `0` on success, negative value mapping to `jsError` on error.
+   */
+  int32_t Configure();
 
   /**
    * @brief Gets the minimum scan period achievable for a given scan system.
@@ -185,19 +201,15 @@ class ScanManager {
    */
   inline bool IsScanning() const;
 
- private:
-  /**
-   * The amount of time cameras start exposing before the laser turns on. This
-   * needs to be accounted for by both the phase table and the min scan period
-   * since they are set relative to laser on times. If ignored, a scheduler
-   * tick could happen while a camera is exposing if the scan period is set
-   * aggressively.
-  **/
-  static const uint32_t kCameraStartEarlyOffsetNs = 9500;
+  bool IsConfigured() const;
 
-  enum SystemState { Disconnected, Connected, Scanning };
+ private:
+  enum SystemState { Disconnected, Connected, Scanning, Close };
 
   void KeepAliveThread();
+
+  // If more profiles queued than threshold, assume partial frame ready to read
+  const uint32_t kFrameSizeThreshold = 50;
 
   std::map<uint32_t, std::shared_ptr<jsDiscovered>> m_serial_to_discovered;
   std::map<uint32_t, ScanHead*> m_serial_to_scan_head;
@@ -206,12 +218,18 @@ class ScanManager {
   std::condition_variable m_condition;
   std::mutex m_mutex;
 
+  ScanSync *m_scansync;
   PhaseTable m_phase_table;
   SystemState m_state;
   jsUnits m_units;
 
   static uint32_t m_uid_count;
   uint32_t m_uid;
+  uint32_t m_min_scan_period_us;
+  uint32_t m_scan_period_us;
+  bool m_is_frame_scanning;
+  bool m_is_frame_ready;
+  uint32_t m_frame_current_sequence;
 };
 
 inline bool ScanManager::IsConnected() const

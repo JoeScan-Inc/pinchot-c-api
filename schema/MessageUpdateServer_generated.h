@@ -333,20 +333,27 @@ flatbuffers::Offset<InfoData> CreateInfoData(flatbuffers::FlatBufferBuilder &_fb
 struct StatusDataT : public flatbuffers::NativeTable {
   typedef StatusData TableType;
   joescan::schema::update::server::Status status = joescan::schema::update::server::Status_SUCCESS;
+  std::string message{};
 };
 
 struct StatusData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   typedef StatusDataT NativeTableType;
   typedef StatusDataBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_STATUS = 4
+    VT_STATUS = 4,
+    VT_MESSAGE = 6
   };
   joescan::schema::update::server::Status status() const {
     return static_cast<joescan::schema::update::server::Status>(GetField<uint16_t>(VT_STATUS, 0));
   }
+  const flatbuffers::String *message() const {
+    return GetPointer<const flatbuffers::String *>(VT_MESSAGE);
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint16_t>(verifier, VT_STATUS) &&
+           VerifyOffset(verifier, VT_MESSAGE) &&
+           verifier.VerifyString(message()) &&
            verifier.EndTable();
   }
   StatusDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -361,6 +368,9 @@ struct StatusDataBuilder {
   void add_status(joescan::schema::update::server::Status status) {
     fbb_.AddElement<uint16_t>(StatusData::VT_STATUS, static_cast<uint16_t>(status), 0);
   }
+  void add_message(flatbuffers::Offset<flatbuffers::String> message) {
+    fbb_.AddOffset(StatusData::VT_MESSAGE, message);
+  }
   explicit StatusDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -374,10 +384,23 @@ struct StatusDataBuilder {
 
 inline flatbuffers::Offset<StatusData> CreateStatusData(
     flatbuffers::FlatBufferBuilder &_fbb,
-    joescan::schema::update::server::Status status = joescan::schema::update::server::Status_SUCCESS) {
+    joescan::schema::update::server::Status status = joescan::schema::update::server::Status_SUCCESS,
+    flatbuffers::Offset<flatbuffers::String> message = 0) {
   StatusDataBuilder builder_(_fbb);
+  builder_.add_message(message);
   builder_.add_status(status);
   return builder_.Finish();
+}
+
+inline flatbuffers::Offset<StatusData> CreateStatusDataDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    joescan::schema::update::server::Status status = joescan::schema::update::server::Status_SUCCESS,
+    const char *message = nullptr) {
+  auto message__ = message ? _fbb.CreateString(message) : 0;
+  return joescan::schema::update::server::CreateStatusData(
+      _fbb,
+      status,
+      message__);
 }
 
 flatbuffers::Offset<StatusData> CreateStatusData(flatbuffers::FlatBufferBuilder &_fbb, const StatusDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -528,6 +551,7 @@ inline void StatusData::UnPackTo(StatusDataT *_o, const flatbuffers::resolver_fu
   (void)_o;
   (void)_resolver;
   { auto _e = status(); _o->status = _e; }
+  { auto _e = message(); if (_e) _o->message = _e->str(); }
 }
 
 inline flatbuffers::Offset<StatusData> StatusData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const StatusDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -539,9 +563,11 @@ inline flatbuffers::Offset<StatusData> CreateStatusData(flatbuffers::FlatBufferB
   (void)_o;
   struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const StatusDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _status = _o->status;
+  auto _message = _o->message.empty() ? 0 : _fbb.CreateString(_o->message);
   return joescan::schema::update::server::CreateStatusData(
       _fbb,
-      _status);
+      _status,
+      _message);
 }
 
 inline MessageServerT *MessageServer::UnPack(const flatbuffers::resolver_function_t *_resolver) const {

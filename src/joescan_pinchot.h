@@ -26,6 +26,30 @@ extern "C" {
 #pragma once
 
 /**
+ * @brief Macro function to check if `jsProfile` has been filled with data
+ * from the scan head.
+ *
+ * @param profile The profile to check.
+ * @return Boolean `true` if has valid data, `false` otherwise.
+ */
+#define jsProfileIsValid(profile) \
+  (((profile).timestamp_ns != 0) && \
+   ((profile).format != JS_DATA_FORMAT_INVALID)) ? \
+  true : false
+
+/**
+ * @brief Macro function to check if `jsRawProfile` has been filled with data
+ * from the scan head.
+ *
+ * @param profile The profile to check.
+ * @return Boolean `true` if has valid data, `false` otherwise.
+ */
+#define jsRawProfileIsValid(profile) \
+  (((profile).timestamp_ns != 0) && \
+   ((profile).format != JS_DATA_FORMAT_INVALID)) ? \
+  true : false
+
+/**
  * @brief Opaque reference to an object in software used to manage a complete
  * system of scan heads.
  */
@@ -115,8 +139,16 @@ enum jsError {
   JS_ERROR_USE_CAMERA_FUNCTION = -13,
   /** @brief Error from wrong function call, use `*Laser` variant function. */
   JS_ERROR_USE_LASER_FUNCTION = -14,
+  /** @brief Error from action not compatible with frame scanning. */
+  JS_ERROR_FRAME_SCANNING = -15,
+  /** @brief Error from action only compatible with frame scanning. */
+  JS_ERROR_NOT_FRAME_SCANNING = -16,
+  /** @brief Configured phase table is not compatible with frame scanning. */
+  JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE = -17,
   /** @brief Error occurred for an unknown reason; this should never happen. */
-  JS_ERROR_UNKNOWN = -15,
+  JS_ERROR_UNKNOWN = -18,
+
+  JS_ERROR_FORCE_INT32_SIZE = INT32_MAX,
 };
 
 /**
@@ -127,6 +159,8 @@ typedef enum {
   JS_UNITS_INVALID = 0,
   JS_UNITS_INCHES = 1,
   JS_UNITS_MILLIMETER = 2,
+
+  JS_UNITS_FORCE_INT32_SIZE = INT32_MAX,
 } jsUnits;
 
 /**
@@ -137,6 +171,8 @@ typedef enum {
   JS_CABLE_ORIENTATION_INVALID = 0,
   JS_CABLE_ORIENTATION_DOWNSTREAM = 1,
   JS_CABLE_ORIENTATION_UPSTREAM = 2,
+
+  JS_CABLE_ORIENTATION_FORCE_INT32_SIZE = INT32_MAX,
 } jsCableOrientation;
 
 /**
@@ -149,6 +185,10 @@ typedef enum {
   JS_SCAN_HEAD_JS50X6B20 = 3,
   JS_SCAN_HEAD_JS50X6B30 = 4,
   JS_SCAN_HEAD_JS50MX = 5,
+  JS_SCAN_HEAD_JS50Z820 = 6,
+  JS_SCAN_HEAD_JS50Z830 = 7,
+
+  JS_SCAN_HEAD_TYPE_FORCE_INT32_SIZE = INT32_MAX,
 } jsScanHeadType;
 
 /**
@@ -159,6 +199,8 @@ typedef enum {
   JS_CAMERA_A = 1,
   JS_CAMERA_B,
   JS_CAMERA_MAX,
+
+  JS_CAMERA_FORCE_INT32_SIZE = INT32_MAX,
 } jsCamera;
 
 /**
@@ -172,7 +214,11 @@ typedef enum {
   JS_LASER_4,
   JS_LASER_5,
   JS_LASER_6,
+  JS_LASER_7,
+  JS_LASER_8,
   JS_LASER_MAX,
+
+  JS_LASER_FORCE_INT32_SIZE = INT32_MAX,
 } jsLaser;
 
 /**
@@ -183,6 +229,8 @@ typedef enum {
   JS_ENCODER_AUX_1,
   JS_ENCODER_AUX_2,
   JS_ENCODER_MAX,
+
+  JS_ENCODER_FORCE_INT32_SIZE = INT32_MAX,
 } jsEncoder;
 
 typedef enum {
@@ -202,6 +250,8 @@ typedef enum {
   JS_PROFILE_FLAG_ENCODER_MAIN_INDEX_Z = 1 << 6,
   /** @brief ScanSync sync input is logic high. */
   JS_PROFILE_FLAG_ENCODER_MAIN_SYNC = 1 << 7,
+
+  JS_PROFILE_FLAGS_FORCE_INT32_SIZE = INT32_MAX,
 } jsProfileFlags;
 
 /**
@@ -223,6 +273,8 @@ typedef enum {
   JS_DATA_FORMAT_XY_FULL,
   JS_DATA_FORMAT_XY_HALF,
   JS_DATA_FORMAT_XY_QUARTER,
+
+  JS_DATA_FORMAT_FORCE_INT32_SIZE = INT32_MAX,
 } jsDataFormat;
 
 /**
@@ -233,6 +285,8 @@ typedef enum {
   JS_DIAGNOSTIC_MODE_INVALID = 0,
   JS_DIAGNOSTIC_FIXED_EXPOSURE,
   JS_DIAGNOSTIC_AUTO_EXPOSURE,
+
+  JS_DIAGNOSTIC_FORCE_INT32_SIZE = INT32_MAX,
 } jsDiagnosticMode;
 
 #pragma pack(push, 1)
@@ -485,13 +539,9 @@ typedef struct {
    * @brief The format of the data for the given `jsProfile`.
    */
   jsDataFormat format;
-  /**
-   * @brief Number of packets received for the profile. If less than
-   * `packets_expected`, then the profile data is incomplete. Generally,
-   * this implies some type of network issue.
-   */
+  /** @deprecated Will be removed in a future release. */
   uint32_t packets_received;
-  /** @brief Total number of packets expected to comprise the profile. */
+  /** @deprecated Will be removed in a future release. */
   uint32_t packets_expected;
   /**
    * @brief The total number of valid scan line measurement points for this
@@ -554,13 +604,9 @@ typedef struct {
    * data is set or not.
    */
   jsDataFormat format;
-  /**
-   * @brief Number of packets received for the profile. If less than
-   * `packets_expected`, then the profile data is incomplete. Generally,
-   * this implies some type of network issue.
-   */
+  /** @deprecated Will be removed in a future release. */
   uint32_t packets_received;
-  /** @brief Total number of packets expected to comprise the profile. */
+  /** @deprecated Will be removed in a future release. */
   uint32_t packets_expected;
   /**
    * @brief The total length of profile data held in the `data` array. This
@@ -696,6 +742,24 @@ EXPORTED void PRE jsGetError(
   const char **error_str) POST;
 
 /**
+ * @brief Initializes a given `jsProfile` to a known invalid state to indicate
+ * it has not been populated with data from the scan head.
+ *
+ * @param profile Reference to `jsProfile` to initialize.
+ */
+EXPORTED void PRE jsProfileInit(
+  jsProfile *profile) POST;
+
+/**
+ * @brief Initializes a given `jsRawProfile` to a known invalid state to
+ * indicate it has not been populated with data from the scan head.
+ *
+ * @param profile Reference to `jsRawProfile` to initialize.
+ */
+EXPORTED void PRE jsRawProfileInit(
+  jsRawProfile *profile) POST;
+
+/**
  * @brief Performs a remote soft power cycle of a scan head.
  *
  * @note This function will only work with scan heads running v16.x.x firmware
@@ -752,6 +816,10 @@ EXPORTED int PRE jsScanSystemDiscover(
  * @brief Obtains a list of all of the scan heads discovered on the network.
  *
  * @param scan_system The scan system that previously performed discovery.
+ * @param results  Pointer to memory to store discover data. Note, the memory
+ * pointed to by `results` must be at least `sizeof(jsDiscovered) * max_results`
+ * in total number of bytes available.
+ * @param max_results The maximum number of discovered results to read.
  * @return The total number of discovered scan heads on success, negative value
  * mapping to `jsError` on error.
  */
@@ -759,6 +827,22 @@ EXPORTED int PRE jsScanSystemGetDiscovered(
   jsScanSystem scan_system,
   jsDiscovered *results,
   uint32_t max_results) POST;
+
+/**
+ * @brief Gets the most recent encoder value reported by the ScanSync.
+ *
+ * @note The ScanSync provides encoder updates at 1ms intervals.
+ *
+ * @param scan_system Reference to the scan system.
+ * @param encoder The selected encoder to obtain value from.
+ * @param value Pointer to be updated with encoder value.
+ *
+ * @return `0` on success, negative value `jsError` on error.
+ */
+EXPORTED int PRE jsScanSystemGetEncoder(
+  jsScanSystem scan_system,
+  jsEncoder encoder,
+  int64_t *value) POST;
 
 /**
  * @brief Creates a `jsScanHead` object representing a physical scan head
@@ -799,8 +883,7 @@ EXPORTED jsScanHead PRE jsScanSystemGetScanHeadById(
  * @return Positive valued token on success, negative value mapping to `jsError`
  * on error.
  */
-EXPORTED jsScanHead PRE
-jsScanSystemGetScanHeadBySerial(
+EXPORTED jsScanHead PRE jsScanSystemGetScanHeadBySerial(
   jsScanSystem scan_system,
   uint32_t serial) POST;
 
@@ -813,8 +896,7 @@ jsScanSystemGetScanHeadBySerial(
  * @return The number of scan heads on success, negative value mapping to
  * `jsError` on error.
  */
-EXPORTED int32_t PRE
-jsScanSystemGetNumberScanHeads(
+EXPORTED int32_t PRE jsScanSystemGetNumberScanHeads(
   jsScanSystem scan_system) POST;
 
 /**
@@ -999,6 +1081,34 @@ jsScanSystemGetMinScanPeriod(
   jsScanSystem scan_system) POST;
 
 /**
+ * @brief Prepares the scan system to begin scanning. If connected, this
+ * function will send all of the necessary configuration data to all of the
+ * scan heads. Provided that no changes are made to any of the scan heads
+ * associated with the scan system, the API will skip sending this data to the
+ * scan heads when calling `jsScanSystemStartScanning` and allow scanning to
+ * start faster.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @return The minimum scan period in microseconds on success, negative value
+ * mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemConfigure(
+  jsScanSystem scan_system) POST;
+
+/**
+ * @brief Obtains the configuration state of the scan system. If `false`, the
+ * scan system needs to be configured by calling `jsScanSystemConfigure` or it
+ * will be sent during `jsScanSystemStartScanning` call, incurring a time
+ * penalty. If `true`, the system is configured and can start scanning with
+ * no time penalty during call to `jsScanSystemStartScanning`.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @return Boolean `true` if configured, `false` otherwise.
+ */
+EXPORTED bool PRE jsScanSystemIsConfigured(
+  jsScanSystem scan_system) POST;
+
+/**
  * @brief Commands scan heads in system to begin scanning, returning geometry
  * and/or brightness values to the client.
  *
@@ -1024,6 +1134,114 @@ EXPORTED int32_t PRE jsScanSystemStartScanning(
  */
 EXPORTED int32_t PRE jsScanSystemStopScanning(
   jsScanSystem scan_system) POST;
+
+/**
+ * @brief Commands scan heads in system to begin scanning, returning geometry
+ * and/or brightness values to the client in an organized frame of profiles,
+ * with each frame being comprised of one cycle through the phase table
+ * corresponding with one complete period.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @param period_us The scan period in microseconds.
+ * @param fmt The data format of the returned scan profile data.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemStartFrameScanning(
+  jsScanSystem scan_system,
+  uint32_t period_us,
+  jsDataFormat fmt) POST;
+
+/**
+ * @brief Returns the number of profiles comprising a single frame of scan data.
+ * This number should be used to appropriately size the arrays used to call
+ * `jsScanSystemGetProfileFrame` and `jsScanSystemGetRawProfileFrame`.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @return Number of elements in frame of scan data.
+ */
+EXPORTED int32_t PRE jsScanSystemGetProfilesPerFrame(
+  jsScanSystem scan_system) POST;
+
+/**
+ * @brief Blocks until a frame of scan data is available to be read.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @param timeout_us Maximum amount of time to wait for in microseconds.
+ * @return `0` on timeout with no frames are available, positive value
+ * indicating the total number of frames able to be read, or negative value
+ * `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemWaitUntilFrameAvailable(
+  jsScanSystem scan_system,
+  uint32_t timeout_us) POST;
+
+/**
+ * @brief Checks if enough data has been collected to construct a frame of
+ * profile data.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @return Boolean `true` if frame is available, `false` otherwise.
+ */
+EXPORTED bool PRE jsScanSystemIsFrameAvailable(
+  jsScanSystem scan_system) POST;
+
+/**
+ * @brief Empties the internal client side software buffers used to store
+ * profiles for frame scanning.
+ *
+ * @note Under normal scanning conditions where the application consumes
+ * frames as they become available, this function will not be needed. It's
+ * use is to be found in cases where the application fails to consume frames
+ * after some time and the number of buffered frames becomes more than the
+ * application can consume and only the most recent scan frame is desired.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemClearFrames(
+  jsScanSystem scan_system) POST;
+
+/**
+ * @brief Reads one frame of `jsProfile` formatted profile data.
+ *
+ * @note If no frame is available this will return immediately.  Care should
+ * be taken if this function is used in a loop; it is advised to either sleep
+ * when `0` profiles are returned, or first call
+ * `jsScanHeadWaitUntilFrameAvailable()` before `jsScanSystemGetProfileFrame()`
+ * so as to avoid excessive CPU usage.
+ *
+ * @param scan_head Reference to scan head.
+ * @param profiles Pointer to memory to store frame of profile data. Note, the
+ * memory pointed to by `profiles` must be at least
+ * `sizeof(jsProfile) * jsScanSystemGetProfilesPerFrame()` in total number of
+ * bytes available.
+ * @return The number of set profiles in frame on success, negative value
+ * mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemGetFrame(
+  jsScanSystem scan_system,
+  jsProfile *profiles) POST;
+
+/**
+ * @brief Reads one frame of `jsRawProfile` formatted profile data.
+ *
+ * @note If no frame is available this will return immediately.  Care should
+ * be taken if this function is used in a loop; it is advised to either sleep
+ * when `0` profiles are returned, or first call
+ * `jsScanHeadWaitUntilFrameAvailable()` before `jsScanSystemGetProfileFrame()`
+ * so as to avoid excessive CPU usage.
+ *
+ * @param scan_head Reference to scan head.
+ * @param profiles Pointer to memory to store frame of profile data. Note, the
+ * memory pointed to by `profiles` must be at least
+ * `sizeof(jsRawProfile) * jsScanSystemGetProfilesPerFrame()` in total number
+ * of bytes available.
+ * @return The number of set profiles in frame on success, negative value
+ * mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanSystemGetRawFrame(
+  jsScanSystem scan_system,
+  jsRawProfile *profiles) POST;
 
 /**
  * @brief Gets scanning state for a scan system.
@@ -1423,6 +1641,8 @@ EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionLaser_BETA(
  * profiles at a reduced rate when the encoder has not traveled enough to
  * trigger a new profile to be returned.
  *
+ * @note This feature is currently not supported with frame scanning.
+ *
  * @param scan_head Reference to scan head.
  * @param min_encoder_travel Number of encoder ticks needed for new profile.
  * @return `0` on success, negative value mapping to `jsError` on error.
@@ -1434,6 +1654,8 @@ EXPORTED int32_t PRE jsScanHeadSetMinimumEncoderTravel(
 /**
  * @brief Returns the configured encoder travel value set by
  * `jsScanHeadSetMinimumEncoderTravel`.
+ *
+ * @note This feature is currently not supported with frame scanning.
  *
  * @param scan_head Reference to scan head.
  * @param min_encoder_travel Pointer to store configured travel value.
@@ -1456,6 +1678,8 @@ EXPORTED int32_t PRE jsScanHeadGetMinimumEncoderTravel(
  * scheduled in the phase table. Greater granularity will be achievable in a
  * future release.
  *
+ * @note This feature is currently not supported with frame scanning.
+ *
  * @param scan_head Reference to scan head.
  * @param idle_period_us The idle scan period in microseconds
  * @return `0` on success, negative value mapping to `jsError` on error.
@@ -1466,6 +1690,8 @@ EXPORTED int32_t PRE jsScanHeadSetIdleScanPeriod(
 
 /**
  * @brief Returns the configured duration set by `jsScanHeadSetIdleScanPeriod`.
+ *
+ * @note This feature is currently not supported with frame scanning.
  *
  * @param scan_head Reference to scan head.
  * @param idle_period_us Pointer to store configured idle period value.
@@ -1655,15 +1881,10 @@ EXPORTED int32_t PRE jsScanHeadClearProfiles(
  * `jsScanHeadWaitUntilProfilesAvailable()` before `jScanHeadGetProfiles()` so
  * as to avoid excessive CPU usage.
  *
- * @note If the internal buffers of the `scan_head` object are filled, reaching
- * `JS_SCAN_HEAD_PROFILES_MAX`, incoming profiles will be dropped by the API.
- * Applications sure ensure they are actively reading out profiles or calling
- * 'jsScanHeadClearProfiles` as needed to clear out old scan data.
- *
  * @param scan_head Reference to scan head.
  * @param profiles Pointer to memory to store profile data. Note, the memory
- * pointed to by `profiles` must be at least `sizeof(jsProfile) * max` in
- * total number of bytes available.
+ * pointed to by `profiles` must be at least `sizeof(jsProfile) * max_profiles`
+ * in total number of bytes available.
  * @param max_profiles The maximum number of profiles to read. Should not
  * exceed `JS_SCAN_HEAD_PROFILES_MAX`.
  * @return The number of profiles read on success, negative value mapping to
@@ -1679,15 +1900,10 @@ EXPORTED int32_t PRE jsScanHeadGetProfiles(
  * The number of profiles returned is either the max value requested or the
  * total number of profiles ready to be read out, whichever is less.
  *
- * @note If the internal buffers of the `scan_head` object are filled, reaching
- * `JS_SCAN_HEAD_PROFILES_MAX`, incoming profiles will be dropped by the API.
- * Applications sure ensure they are actively reading out profiles or calling
- * 'jsScanHeadClearProfiles` as needed to clear out old scan data.
- *
  * @param scan_head Reference to scan head.
  * @param profiles Pointer to memory to store profile data. Note, the memory
- * pointed to by `profiles` must be at least `sizeof(jsRawProfile) * max` in
- * total number of bytes available.
+ * pointed to by `profiles` must be at least `sizeof(jsProfile) * max_profiles`
+ * in total number of bytes available.
  * @param max_profiles The maximum number of profiles to read. Should not
  * exceed `JS_SCAN_HEAD_PROFILES_MAX`.
  * @return The number of profiles read on success, negative value mapping to

@@ -5,6 +5,10 @@
  * root for license information.
  */
 
+#if defined(WIN32)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
+
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -128,7 +132,9 @@ int NetworkInterface::ResolveIpAddressMDNS(uint32_t serial_number, uint32_t *ip)
 
 uint32_t NetworkInterface::parseIPV4string(char *ip_str) {
   uint32_t ipbytes[4];
-  sscanf(ip_str, "%d.%d.%d.%d", &ipbytes[3], &ipbytes[2], &ipbytes[1], &ipbytes[0]);
+  int r = sscanf(ip_str, "%d.%d.%d.%d", &ipbytes[3], &ipbytes[2], &ipbytes[1], &ipbytes[0]);
+  // disregard return value
+  (void)r;
   return ipbytes[0] | ipbytes[1] << 8 | ipbytes[2] << 16 | ipbytes[3] << 24;
 }
 

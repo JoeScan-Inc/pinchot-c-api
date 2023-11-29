@@ -19,6 +19,7 @@ else()
                    EXCLUDE_FROM_ALL)
 
   set(SCHEMA_SOURCES
+    ${SCHEMA_DIR}/MessageClientEnums.fbs
     ${SCHEMA_DIR}/MessageClient.fbs
     ${SCHEMA_DIR}/MessageServer.fbs
     ${SCHEMA_DIR}/MessageDiscoveryClient.fbs
@@ -26,7 +27,8 @@ else()
     ${SCHEMA_DIR}/MessageUpdateClient.fbs
     ${SCHEMA_DIR}/MessageUpdateServer.fbs
     ${SCHEMA_DIR}/ScanHeadType.fbs
-    ${SCHEMA_DIR}/ScanHeadSpecification.fbs)
+    ${SCHEMA_DIR}/ScanHeadSpecification.fbs
+    ${SCHEMA_DIR}/StoreInfoData.fbs)
 
   build_flatbuffers(
     "${SCHEMA_SOURCES}"

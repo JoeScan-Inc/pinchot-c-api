@@ -5,7 +5,7 @@
 
 using namespace joescan;
 
-PhaseTable::PhaseTable()
+PhaseTable::PhaseTable() : m_has_duplicate_elements(false), m_is_dirty(false)
 {
   Reset();
 }
@@ -13,6 +13,10 @@ PhaseTable::PhaseTable()
 PhaseTableCalculated PhaseTable::CalculatePhaseTable()
 {
   PhaseTableCalculated table_calculated;
+
+  if (m_table.size() == 0) {
+    return table_calculated;
+  } 
 
   // build up the initial calculated phase table using the user data; set the
   // duration for each phase to be the longest laser on time per phase
@@ -109,6 +113,45 @@ PhaseTableCalculated PhaseTable::CalculatePhaseTable()
     table_calculated.total_duration_us += phase.duration_us;
   }
 
+  /**
+   * The amount of time cameras start exposing before the laser turns on.
+   * This needs to be accounted for by both the phase table and the min scan
+   * period since they are set relative to laser on times. If ignored, a
+   * scheduler tick could happen while a camera is exposing if the scan
+   * period is set aggressively.
+  **/
+  static const uint32_t kCameraStartEarlyOffsetNs = 9500;
+  static const uint32_t kCameraStartEarlyOffsetUs =
+    (uint32_t) std::ceil(((double) kCameraStartEarlyOffsetNs) / 1000.0);
+
+  table_calculated.camera_early_offset_us = kCameraStartEarlyOffsetUs;
+
+  // we need to check to make sure we aren't scanning faster than 4kHz per
+  // element; cap the value if greater and distribute the time delta equally
+  // across all the phases.
+  auto x = std::max_element(m_scan_head_count.begin(), m_scan_head_count.end(),
+    [](const std::pair<ScanHead*, uint32_t>& p1,
+       const std::pair<ScanHead*, uint32_t>& p2) {
+        return p1.second < p2.second;
+      });
+  uint32_t max_head_elements = x->second;
+  uint32_t min_duration_us = max_head_elements * kMinElementDurationUs;
+  uint32_t total_duration_us = table_calculated.camera_early_offset_us +
+                               table_calculated.total_duration_us;
+
+  if (total_duration_us < min_duration_us) {
+    uint32_t delta = min_duration_us - total_duration_us;
+    uint32_t size = table_calculated.phases.size();
+    // integer round up
+    uint32_t offset = (delta + (size - 1)) / size;
+
+    table_calculated.total_duration_us = 0;
+    for (auto &phase : table_calculated.phases) {
+      phase.duration_us += offset;
+      table_calculated.total_duration_us += phase.duration_us;
+    }
+  }
+
   return table_calculated;
 }
 
@@ -121,12 +164,15 @@ void PhaseTable::Reset()
 {
   m_table.clear();
   m_scan_head_count.clear();
+  m_has_duplicate_elements = false;
+  m_is_dirty = true;
 }
 
 void PhaseTable::CreatePhase()
 {
   std::vector<PhasedElement> phase;
   m_table.push_back(phase);
+  m_is_dirty = true;
 }
 
 int PhaseTable::AddToLastPhaseEntry(ScanHead *scan_head, jsCamera camera,
@@ -173,6 +219,17 @@ int PhaseTable::AddToPhaseEntryCommon(uint32_t phase, ScanHead *scan_head,
     if (m_scan_head_count[scan_head] >= scan_head->GetMaxScanPairs()) {
       return JS_ERROR_NO_MORE_ROOM;
     }
+
+    for (auto &p : m_table) {
+      for (auto &el : p) {
+        if ((scan_head == el.scan_head) &&
+            (camera == el.camera) &&
+            (laser == el.laser)) {
+          m_has_duplicate_elements = true;
+          break;
+        }
+      }
+    }
   } else {
     // first time scan head has been entered into phase table
     m_scan_head_count[scan_head] = 0;
@@ -203,6 +260,22 @@ int PhaseTable::AddToPhaseEntryCommon(uint32_t phase, ScanHead *scan_head,
   }
 
   m_table[phase].push_back(el);
+  m_is_dirty = true;
 
   return 0;
+}
+
+bool PhaseTable::HasDuplicateElements()
+{
+  return m_has_duplicate_elements;
+}
+
+bool PhaseTable::IsDirty()
+{
+  return m_is_dirty;
+}
+
+void PhaseTable::ClearDirty()
+{
+  m_is_dirty = false;
 }

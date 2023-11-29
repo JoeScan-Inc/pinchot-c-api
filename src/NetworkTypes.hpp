@@ -47,7 +47,7 @@ using Datagram = std::vector<uint8_t>;
 
 // The DataType is a bit field, it has the flag set for all data types
 // present to be sent.
-enum DataType : uint16_t {
+enum class DataType : uint16_t {
   Brightness = 0x1,
   XYData = 0x2,
   Width = 0x4,
@@ -59,15 +59,15 @@ enum DataType : uint16_t {
 static int GetSizeFor(DataType data_type)
 {
   switch (data_type) {
-    case XYData: {
+  case DataType::XYData: {
       return 2 * sizeof(uint16_t);
     }
-    case Width:
-    case SecondMoment:
-    case Subpixel: {
+    case DataType::Width:
+    case DataType::SecondMoment:
+    case DataType::Subpixel: {
       return sizeof(uint16_t);
     }
-    case Brightness:
+    case DataType::Brightness:
     default:
       return sizeof(uint8_t);
   }

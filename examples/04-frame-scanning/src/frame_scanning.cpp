@@ -6,22 +6,26 @@
  */
 
 /**
- * @file basic_scanning.cpp
- * @brief Example demonstrating how to read profile data from scan heads.
- *
- * This application shows the fundamentals of how to stream profile data
- * from scan heads up through the client API and into your own code. Each scan
- * head will be initially configured before scanning using generous settings
- * that should guarantee that valid profile data is obtained. Following
- * configuration, a limited number of profiles will be collected before halting
- * the scan and disconnecting from the scan heads.
+ * @file frame_scanning.cpp
+ * @brief
  */
 
+#include <atomic>
 #include <chrono>
 #include <iostream>
 #include <thread>
 #include <vector>
 #include "joescan_pinchot.h"
+
+#ifdef _WIN32
+#include "Windows.h"
+#include "processthreadsapi.h"
+#endif
+
+static std::atomic<bool> _is_scanning(false);
+static std::atomic<uint32_t> _frame_count(0);
+static std::atomic<uint32_t> _profile_count(0);
+static std::atomic<uint32_t> _invalid_count(0);
 
 class ApiError : public std::runtime_error {
  private:
@@ -42,34 +46,6 @@ class ApiError : public std::runtime_error {
     return m_return_code;
   }
 };
-
-/**
- * @brief This function is a small utility function used to explore profile
- * data. In this case, it will iterate over the valid profile data and
- * find the highest measurement in the Y axis.
- *
- * @param profiles Array of profiles from a single scan head.
- * @param num_profiles Total number of profiles contained in array.
- * @return jsProfileData The profile measurement with the greatest Y axis value
- * from the array of profiles passed in.
- */
-jsProfileData find_scan_profile_highest_point(jsProfile *profiles,
-                                              uint32_t num_profiles)
-{
-  jsProfileData p = {0, 0, 0};
-
-  for (unsigned int i = 0; i < num_profiles; i++) {
-    for (unsigned int j = 0; j < profiles[i].data_len; j++) {
-      if (profiles[i].data[j].y > p.y) {
-        p.brightness = profiles[i].data[j].brightness;
-        p.x = profiles[i].data[j].x;
-        p.y = profiles[i].data[j].y;
-      }
-    }
-  }
-
-  return p;
-}
 
 /**
  * @brief Initializes and configures scan heads.
@@ -103,7 +79,7 @@ void initialize_scan_heads(jsScanSystem &scan_system,
     uint32_t serial = serial_numbers[i];
     auto scan_head = jsScanSystemCreateScanHead(scan_system, serial, i);
     if (0 > scan_head) {
-      throw ApiError("failed to create scan head", scan_head);
+      throw ApiError("failed to create scan head", (int32_t) scan_head);
     }
     scan_heads.push_back(scan_head);
 
@@ -121,17 +97,7 @@ void initialize_scan_heads(jsScanSystem &scan_system,
       throw ApiError("failed to set scan head configuration", r);
     }
 
-    // To illustrate that each scan head can be configured independently,
-    // we'll alternate between two different windows for each scan head. The
-    // other options we will leave the same only for the sake of convenience;
-    // these can be independently configured as needed.
-    if (i % 2) {
-      std::cout << serial << ": scan window is 20, -20, -20, 20" << std::endl;
-      r = jsScanHeadSetWindowRectangular(scan_head, 20.0, -20.0, -20.0, 20.0);
-    } else {
-      std::cout << serial << ": scan window is 30, -30, -30, 30" << std::endl;
-      r = jsScanHeadSetWindowRectangular(scan_head, 30.0, -30.0, -30.0, 30.0);
-    }
+    r = jsScanHeadSetWindowRectangular(scan_head, 30.0, -30.0, -30.0, 30.0);
     if (0 > r) {
       throw ApiError("failed to set window", r);
     }
@@ -139,6 +105,11 @@ void initialize_scan_heads(jsScanSystem &scan_system,
     r = jsScanHeadSetAlignment(scan_head, 0.0, 0.0, 0.0);
     if (0 > r) {
       throw ApiError("failed to set alignment", r);
+    }
+
+    r = jsScanHeadSetCableOrientation(scan_head, JS_CABLE_ORIENTATION_UPSTREAM);
+    if (0 > r) {
+      throw ApiError("failed to set cable orientation", r);
     }
   }
 }
@@ -306,13 +277,94 @@ void initialize_phase_table(jsScanSystem &scan_system,
   }
 }
 
+/**
+ * @brief This function receives profile data from the scan system as a scan
+ * frame. The frame will contain profile data from all the scan heads.
+ *
+ * @param scan_system Reference to the scan sysetm to recieve profile data from.
+ */
+static void receiver(jsScanSystem scan_system,
+                     std::vector<uint32_t> serial_numbers)
+{
+  // For applications with heavy CPU load, it is advised to boost the priority
+  // of the thread reading out the frame data. If the thread reading out the
+  // scan data falls behind, data will be dropped, causing problems later on
+  // when trying to analyze what was scanned.
+#ifdef _WIN32
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+#endif
+  jsRawProfile* profiles = nullptr;
+
+  try {
+    int32_t r = jsScanSystemGetProfilesPerFrame(scan_system);
+    if (0 >= r) {
+      throw ApiError("failed to read frame size", r);
+    }
+
+    uint32_t profiles_per_frame = uint32_t(r);
+    profiles = new jsRawProfile[uint32_t(profiles_per_frame)];
+
+    while (_is_scanning) {
+      r = jsScanSystemWaitUntilFrameAvailable(scan_system, 1000000);
+      if (0 == r) {
+        continue;
+      }
+      else if (0 > r) {
+        throw ApiError("failed to wait for frame", r);
+      }
+
+      r = jsScanSystemGetRawFrame(scan_system, profiles);
+      if (0 >= r) {
+        throw ApiError("failed to read frame", r);
+      }
+
+      _profile_count += r;
+      _frame_count += 1;
+      uint32_t valid_count = 0;
+      for (uint32_t n = 0; n < profiles_per_frame; n++) {
+        if (jsRawProfileIsValid(profiles[n])) {
+          valid_count++;
+        }
+        else {
+          _invalid_count++;
+          std::cout << "Invalid: " << profiles[n].sequence_number << " "
+            << serial_numbers[profiles[n].scan_head_id];
+          if (JS_CAMERA_A == profiles[n].camera) {
+            std::cout << ".A.";
+          }
+          else {
+            std::cout << ".B.";
+          }
+          std::cout << profiles[n].laser << std::endl;
+        }
+      }
+      if (valid_count != profiles_per_frame) {
+        std::cout << "received " << valid_count << " of " << profiles_per_frame
+          << std::endl;
+      }
+    }
+  }
+  catch (ApiError& e) {
+    std::cout << "ERROR: " << e.what() << std::endl;
+    const char* err_str = nullptr;
+    jsError err = e.return_code();
+    if (JS_ERROR_NONE != err) {
+      jsGetError(err, &err_str);
+      std::cout << "jsError (" << err << "): " << err_str << std::endl;
+    }
+  }
+
+  if (nullptr != profiles) {
+    delete[] profiles;
+  }
+}
+
 int main(int argc, char *argv[])
 {
   jsScanSystem scan_system;
   std::vector<jsScanHead> scan_heads;
   std::vector<uint32_t> serial_numbers;
-  jsProfile **profiles = nullptr;
-  uint32_t total_profiles = 1000;
+  std::thread thread;
   int32_t r = 0;
 
   if (2 > argc) {
@@ -325,13 +377,6 @@ int main(int argc, char *argv[])
     serial_numbers.emplace_back(strtoul(argv[i], NULL, 0));
   }
 
-  // Allocate memory for the profiles we will read out from the scan head
-  // when we start scanning.
-  profiles = new jsProfile *[serial_numbers.size()];
-  for (unsigned int i = 0; i < serial_numbers.size(); i++) {
-    profiles[i] = new jsProfile[total_profiles];
-  }
-
   {
     const char *version_str;
     jsGetAPIVersion(&version_str);
@@ -339,27 +384,18 @@ int main(int argc, char *argv[])
   }
 
   try {
-    // First step is to create a scan manager to manage the scan heads.
     scan_system = jsScanSystemCreate(JS_UNITS_INCHES);
     if (0 > scan_system) {
-      throw ApiError("failed to create scan system", scan_system);
+      throw ApiError("failed to create scan system", (int32_t) scan_system);
     }
 
-    // Initialize all the scan heads in the scan system and configure them
-    // for scanning.
+    // Initialize & configure all the scan heads.
     initialize_scan_heads(scan_system, scan_heads, serial_numbers);
 
-    // Now that the scan heads are configured, we'll connect to the heads.
     r = jsScanSystemConnect(scan_system, 10);
     if (0 > r) {
-      // This error condition indicates that something wrong happened during
-      // the connection process itself and should be understood by extension
-      // that none of the scan heads are connected.
       throw ApiError("failed to connect", r);
     } else if (jsScanSystemGetNumberScanHeads(scan_system) != r) {
-      // On this error condition, connection was successful to some of the scan
-      // heads in the system. We can query the scan heads to determine which
-      // one successfully connected and which ones failed.
       for (auto scan_head : scan_heads) {
         if (false == jsScanHeadIsConnected(scan_head)) {
           uint32_t serial = jsScanHeadGetSerial(scan_head);
@@ -369,73 +405,30 @@ int main(int argc, char *argv[])
       throw ApiError("failed to connect to all scan heads", 0);
     }
 
-    // Initialize the phase table for the scan system. This will schedule
-    // scanning time for all of the scan heads.
     initialize_phase_table(scan_system, scan_heads);
 
-    // Once the phase table is created, we can then read the minimum scan 
-    // period of the scan system. This value depends on how many phases there
-    // are in the phase table and each scan head's laser on time & window
-    // configuration.
     int32_t min_period_us = jsScanSystemGetMinScanPeriod(scan_system);
     if (0 >= min_period_us) {
       throw ApiError("failed to read min scan period", min_period_us);
     }
     std::cout << "min scan period is " << min_period_us << " us" << std::endl;
 
+
     std::cout << "start scanning" << std::endl;
     jsDataFormat data_format = JS_DATA_FORMAT_XY_BRIGHTNESS_FULL;
-    r = jsScanSystemStartScanning(scan_system, min_period_us, data_format);
+    r = jsScanSystemStartFrameScanning(scan_system,
+                                       min_period_us,
+                                       data_format);
     if (0 > r) {
       throw ApiError("failed to start scanning", r);
     }
 
-    // We'll read out a small number of profiles for each scan head, servicing
-    // each one in a round robin fashion until the requested number of profiles
-    // have been obtained.
-    uint32_t max_profiles = 10;
-    for (unsigned int i = 0; i < total_profiles; i += max_profiles) {
-      for (unsigned int j = 0; j < scan_heads.size(); j++) {
-        // Wait until we have 10 profiles available for reading out. Note that
-        // this function will block, placing this process in a low CPU state
-        // until the requested number of profiles are available.
-        r = jsScanHeadWaitUntilProfilesAvailable(scan_heads[j], max_profiles,
-                                                 1000000);
-        if (0 > r) {
-          throw ApiError("failed to wait for profiles", r);
-        }
+    _is_scanning = true;
+    thread = std::thread(receiver, scan_system, serial_numbers);
 
-        // When we arrive here, there should be profile data to read out
-        // from the API. We'll call the following function to read out profiles
-        // into our array, processing them later.
-        r = jsScanHeadGetProfiles(scan_heads[j], &profiles[j][i], max_profiles);
-        if (0 > r) {
-          throw ApiError("failed to get profiles", r);
-        }
-      }
-    }
-
-    // We've collected all of our data; time to stop scanning. Calling this
-    // function will cause each scan head within the entire scan system to
-    // stop scanning. Once we're done scanning, we'll process the data.
-    std::cout << "stop scanning" << std::endl;
-    r = jsScanSystemStopScanning(scan_system);
-    if (0 > r) {
-      throw ApiError("failed to stop scanning", r);
-    }
-
-    for (auto scan_head : scan_heads) {
-      uint32_t serial = jsScanHeadGetSerial(scan_head);
-      uint32_t id = jsScanHeadGetId(scan_head);
-      auto p = find_scan_profile_highest_point(profiles[id], total_profiles);
-      std::cout << serial << ": highest point x=" << p.x << ",y=" << p.y
-                << ",brightness=" << p.brightness << std::endl;
-    }
-
-    r = jsScanSystemDisconnect(scan_system);
-    if (0 > r) {
-      throw ApiError("failed to disconnect", r);
-    }
+    // Put this thread to sleep until the total scan time is done.
+    unsigned long int scan_time_sec = 10;
+    std::this_thread::sleep_for(std::chrono::seconds(scan_time_sec));
   } catch (ApiError &e) {
     std::cout << "ERROR: " << e.what() << std::endl;
     r = 1;
@@ -448,15 +441,26 @@ int main(int argc, char *argv[])
     }
   }
 
-  jsScanSystemFree(scan_system);
-
-  // Free memory used to hold the received profiles.
-  if (nullptr != profiles) {
-    for (unsigned int i = 0; i < serial_numbers.size(); i++) {
-      delete profiles[i];
-    }
-    delete profiles;
+  _is_scanning = false;
+  if (thread.joinable()) {
+    thread.join();
   }
+
+  std::cout << "stop scanning" << std::endl;
+  r = jsScanSystemStopScanning(scan_system);
+  if (0 > r) {
+    std::cout << "ERROR: failed to stop scanning" << std::endl;
+  }
+
+  std::cout << "read " << _frame_count << " frames (" << _profile_count
+            << " profiles, " << _invalid_count << " invalid)" << std::endl;
+
+  r = jsScanSystemDisconnect(scan_system);
+  if (0 > r) {
+    std::cout << "ERROR: failed to disconnect" << std::endl;
+  }
+
+  jsScanSystemFree(scan_system);
 
   return (0 == r) ? 0 : 1;
 }

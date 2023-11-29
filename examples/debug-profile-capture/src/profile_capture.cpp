@@ -343,11 +343,11 @@ int main(int argc, char *argv[])
     joescan::ScanApplication app;
 
     app.SetSerialNumber(serial);
+    app.Connect();
     app.SetLaserOn(laser_def, laser_min, laser_max);
     app.SetThreshold(thresh);
     app.SetWindow(window_top, window_bottom, window_left, window_right);
     app.Configure();
-    app.Connect();
 
     std::cout << "acquiring " << num_profiles << " profiles" << std::endl;
     _num_profiles_requested = num_profiles;

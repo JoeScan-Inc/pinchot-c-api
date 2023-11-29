@@ -13,8 +13,7 @@
 #include <vector>
 
 #include "joescan_pinchot.h"
-#include "MessageDiscoveryClient_generated.h"
-#include "MessageDiscoveryServer_generated.h"
+#include "FlatbufferMessages.hpp"
 #include "UDPBroadcastSocket.hpp"
 #include "Version.hpp"
 #endif

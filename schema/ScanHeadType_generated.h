@@ -16,37 +16,43 @@ enum ScanHeadType : uint16_t {
   ScanHeadType_JS50X6B20 = 3,
   ScanHeadType_JS50X6B30 = 4,
   ScanHeadType_JS50MX = 5,
+  ScanHeadType_JS50Z820 = 6,
+  ScanHeadType_JS50Z830 = 7,
   ScanHeadType_MIN = ScanHeadType_INVALID,
-  ScanHeadType_MAX = ScanHeadType_JS50MX
+  ScanHeadType_MAX = ScanHeadType_JS50Z830
 };
 
-inline const ScanHeadType (&EnumValuesScanHeadType())[6] {
+inline const ScanHeadType (&EnumValuesScanHeadType())[8] {
   static const ScanHeadType values[] = {
     ScanHeadType_INVALID,
     ScanHeadType_JS50WX,
     ScanHeadType_JS50WSC,
     ScanHeadType_JS50X6B20,
     ScanHeadType_JS50X6B30,
-    ScanHeadType_JS50MX
+    ScanHeadType_JS50MX,
+    ScanHeadType_JS50Z820,
+    ScanHeadType_JS50Z830
   };
   return values;
 }
 
 inline const char * const *EnumNamesScanHeadType() {
-  static const char * const names[7] = {
+  static const char * const names[9] = {
     "INVALID",
     "JS50WX",
     "JS50WSC",
     "JS50X6B20",
     "JS50X6B30",
     "JS50MX",
+    "JS50Z820",
+    "JS50Z830",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameScanHeadType(ScanHeadType e) {
-  if (flatbuffers::IsOutRange(e, ScanHeadType_INVALID, ScanHeadType_JS50MX)) return "";
+  if (flatbuffers::IsOutRange(e, ScanHeadType_INVALID, ScanHeadType_JS50Z830)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesScanHeadType()[index];
 }

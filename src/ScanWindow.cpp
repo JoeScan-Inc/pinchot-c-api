@@ -53,20 +53,20 @@ ScanWindow::ScanWindow(std::vector<jsCoordinate> coordinates)
     m_right(0.0)
 {
   for (uint32_t n = 0; n < (coordinates.size() - 1); n++) {
-    int32_t x0 = coordinates[n + 0].x * 1000;
-    int32_t y0 = coordinates[n + 0].y * 1000;
-    int32_t x1 = coordinates[n + 1].x * 1000;
-    int32_t y1 = coordinates[n + 1].y * 1000;
+    int32_t x0 = (int32_t) (coordinates[n + 0].x * 1000);
+    int32_t y0 = (int32_t) (coordinates[n + 0].y * 1000);
+    int32_t x1 = (int32_t) (coordinates[n + 1].x * 1000);
+    int32_t y1 = (int32_t) (coordinates[n + 1].y * 1000);
     m_constraints.push_back(
       WindowConstraint(Point2D<int64_t>(x0, y0), Point2D<int64_t>(x1, y1)));
   }
 
   // connect first & last points together
   {
-    int32_t x0 = coordinates[coordinates.size() - 1].x * 1000;
-    int32_t y0 = coordinates[coordinates.size() - 1].y * 1000;
-    int32_t x1 = coordinates[0].x * 1000;
-    int32_t y1 = coordinates[0].y * 1000;
+    int32_t x0 = (int32_t) (coordinates[coordinates.size() - 1].x * 1000);
+    int32_t y0 = (int32_t) (coordinates[coordinates.size() - 1].y * 1000);
+    int32_t x1 = (int32_t) (coordinates[0].x * 1000);
+    int32_t y1 = (int32_t) (coordinates[0].y * 1000);
     m_constraints.push_back(
       WindowConstraint(Point2D<int64_t>(x0, y0), Point2D<int64_t>(x1, y1)));
   }

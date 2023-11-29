@@ -3,6 +3,7 @@
 #define _USE_MATH_DEFINES
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <cassert>
 #include <cmath>
@@ -20,10 +21,10 @@
    # echo 0x10000000 > /proc/sys/net/core/rmem_max
 */
 
+static std::atomic<bool> _is_scanning(false);
 static std::mutex _mtx;
-static std::vector<uint64_t> _recv_profiles;
-static std::vector<uint64_t> _recv_packets;
-static std::vector<uint64_t> _exp_packets;
+static std::vector<uint64_t> _missing_profiles;
+static std::vector<uint64_t> _total_profiles;
 
 // these are included to help avoid the transform from getting optimized out
 static volatile double _x = 0.0;
@@ -74,12 +75,13 @@ static void receiver(jsScanHead scan_head)
   profiles = new jsProfile[max_profiles];
   uint32_t serial = jsScanHeadGetSerial(scan_head);
   uint32_t idx = jsScanHeadGetId(scan_head);
+  std::map<std::pair<jsCamera, jsLaser>, uint32_t> seq;
 
   _mtx.lock();
   std::cout << "begin receiving on scan head " << serial << std::endl;
   _mtx.unlock();
 
-  while (1) {
+  while (_is_scanning) {
     int32_t r = 0;
 
     r = jsScanHeadWaitUntilProfilesAvailable(scan_head, 10, 100000);
@@ -88,26 +90,43 @@ static void receiver(jsScanHead scan_head)
                 << std::endl;
       continue;
     } else if (0 == r) {
-      std::cout << "no profiles left to read" << std::endl;
-      break;
+      continue;
     }
 
     r = jsScanHeadGetProfiles(scan_head, profiles, max_profiles);
     if (0 > r) {
-      std::cout << "ERROR jsScanHeadGetProfiles returned" << r << std::endl;
+      std::cout << "ERROR: jsScanHeadGetProfiles returned" << r << std::endl;
       continue;
     } else if (0 == r) {
-      std::cout << "ERROR jsScanHeadGetProfiles no profiles" << std::endl;
+      std::cout << "ERROR: jsScanHeadGetProfiles no profiles" << std::endl;
       continue;
     }
 
-    _mtx.lock();
-    _recv_profiles[idx] += r;
-    for (int n = 0; n < r; n++) {
-      _recv_packets[idx] += profiles[n].packets_received;
-      _exp_packets[idx] += profiles[n].packets_expected;
+    _total_profiles[idx] += r;
+    for (uint32_t n = 0; n < uint32_t(r); n++) {
+      auto pair = std::make_pair(profiles[n].camera, profiles[n].laser);
+      if (0 == seq.count(pair)) {
+        seq[pair] = 1;
+      }
+
+      if (profiles[n].sequence_number == seq[pair]) {
+        seq[pair] += 1;
+      } else if (profiles[n].sequence_number > seq[pair]) {
+        _mtx.lock();
+        std::cout << "ERROR: skipped sequence number, got "
+                  << profiles[n].sequence_number << ", expected " << seq[pair]
+                  << std::endl;
+        _mtx.unlock();
+        _missing_profiles[idx] += profiles[n].sequence_number - seq[pair];
+        seq[pair] = profiles[n].sequence_number + 1;
+      } else {
+        _mtx.lock();
+        std::cout << "ERROR: old sequence number, got "
+                  << profiles[n].sequence_number << ", expected " << seq[pair]
+                  << std::endl;
+        _mtx.unlock();
+      }
     }
-    _mtx.unlock();
   }
 
   _mtx.lock();
@@ -242,17 +261,16 @@ int main(int argc, char *argv[])
   try {
     joescan::ScanApplication app;
 
-    for (uint32_t n = 0; n < serial_numbers.size(); n++) {
-      _recv_profiles.push_back(0);
-      _recv_packets.push_back(0);
-      _exp_packets.push_back(0);
-    }
+    _missing_profiles.resize(serial_numbers.size(), 0);
+    _total_profiles.resize(serial_numbers.size(), 0);
 
     app.SetSerialNumber(serial_numbers);
+    app.Connect();
     app.SetLaserOn(laser_def, laser_min, laser_max);
     app.SetWindow(window_top, window_bottom, window_left, window_right);
     app.Configure();
-    app.Connect();
+
+    _is_scanning = true;
     app.StartScanning(period_us, fmt, &receiver);
 
     auto scan_heads = app.GetScanHeads();
@@ -260,43 +278,15 @@ int main(int argc, char *argv[])
     for (unsigned long i = 0; i < scan_time_sec; i++) {
       std::this_thread::sleep_for(std::chrono::seconds(1));
       std::cout << i << std::endl;
-      if (is_status) {
-        jsScanHeadStatus status;
-        r = jsScanHeadGetStatus(scan_heads[0], &status);
-        if (0 == r) PrintStatus(status);
-      }
     }
 
+    _is_scanning = false;
     app.StopScanning();
 
-    // Read the number of profiles sent from each scan head to know how many
-    // profiles we should expect to have recieved.
-    jsScanHeadStatus status;
-    std::vector<uint32_t> exp(scan_heads.size(), 0);
-    for (uint32_t i = 0; i < scan_heads.size(); i++) {
-      r = jsScanHeadGetStatus(scan_heads[i], &status);
-      if (0 > r) {
-        throw joescan::ApiError("failed to obtain status message", r);
-      }
-      exp[i] += status.num_profiles_sent;
-    }
-
-    // If everything went well and the system was able to run fast enough,
-    // the number of recieved profiles will be equal to the total exp.
     for (uint32_t n = 0; n < scan_heads.size(); n++) {
-      if ((_recv_packets[n] != _exp_packets[n]) ||
-          (_recv_profiles[n] != exp[n])) {
-        std::cout << "ERROR " << serial_numbers[n] << std::endl;
-        std::cout << "\texpected profiles: " << exp[n] << std::endl;
-        std::cout << "\treceived profiles: " << _recv_profiles[n] << std::endl;
-        std::cout << "\texpected packets: " << _exp_packets[n] << std::endl;
-        std::cout << "\treceived packets: " << _recv_packets[n] << std::endl;
-        r = -1;
-      } else {
-        std::cout << "success " << serial_numbers[n] << std::endl;
-        std::cout << "\tprofiles: " << exp[n] << std::endl;
-        std::cout << "\tpackets: " << _exp_packets[n] << std::endl;
-      }
+      uint32_t serial = jsScanHeadGetSerial(scan_heads[n]);
+      std::cout << serial << ": received " << _total_profiles[n] << ", "
+                << _missing_profiles[n] << " missing" << std::endl;
     }
 
     app.Disconnect();

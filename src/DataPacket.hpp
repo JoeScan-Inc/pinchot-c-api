@@ -8,98 +8,93 @@
 #ifndef JOESCAN_DATA_PACKET_H
 #define JOESCAN_DATA_PACKET_H
 
-#include <map>
-#include <memory>
+#include <bitset>
+#include <cassert>
 #include <vector>
 
 #include "NetworkTypes.hpp"
+#include "TcpSerializationHelpers.hpp"
 #include "joescan_pinchot.h"
 
 namespace joescan {
-struct FragmentLayout {
-  unsigned int step = 0;
-  unsigned int num_vals = 0;
-  unsigned int offset = 0;
-  unsigned int payload_size = 0;
-};
-
-class DataPacket {
- public:
+struct DataPacket {
   DataPacket() = default;
-  DataPacket(uint8_t *bytes, uint32_t num_bytes, uint64_t received_timestamp);
   DataPacket(const DataPacket &other) = default;
 
-  DatagramHeader GetHeader() const;
-  uint32_t GetSourceId() const;
-  uint8_t GetScanHeadId() const;
-  uint32_t GetCameraPort() const;
-  uint32_t GetLaserPort() const;
-  uint64_t GetTimeStamp() const;
-  uint32_t GetSequenceNumber() const;
+  DataPacket(uint8_t *bytes)
+  {
+    uint64_t *pu64 = reinterpret_cast<uint64_t *>(bytes);
+    uint32_t *pu32 = reinterpret_cast<uint32_t *>(bytes);
+    uint16_t *pu16 = reinterpret_cast<uint16_t *>(bytes);
+    uint8_t *pu8 = bytes;
 
-  /**
-   * Profile data can be transmitted over the wire through multiple UDP
-   * packets if the payload is large enough. This function returns the
-   * packet's sequential number within the total number of packets to be sent.
-   *
-   * @return The packet's number within all packets needed for the Profile.
-   */
-  uint32_t GetPartNum() const;
+    header.magic = ntohs(pu16[0]);
+    header.exposure_time_us = ntohs(pu16[1]);
+    header.scan_head_id = pu8[4];
+    header.camera_port = pu8[5];
+    header.laser_port = pu8[6];
+    header.flags = pu8[7];
+    header.timestamp_ns = hostToNetwork<uint64_t>(pu64[1]);
+    header.laser_on_time_us = ntohs(pu16[8]);
+    header.data_type = ntohs(pu16[9]);
+    header.data_length = ntohs(pu16[10]);
+    header.number_encoders = pu8[22];
+    header.datagram_position = ntohl(pu32[6]);
+    header.number_datagrams = ntohl(pu32[7]);
+    header.start_column = ntohs(pu16[16]);
+    header.end_column = ntohs(pu16[17]);
+    header.sequence_number = ntohl(pu32[9]);
 
-  /**
-   * Profile data can be transmitted over the wire through multiple UDP
-   * packets if the payload is large enough. This function returns the
-   * total number of packets that comprise a given Profile's data.
-   *
-   * @return The total number of packets required for the Profile.
-   */
-  uint32_t GetNumParts() const;
-  int GetPayloadLength() const;
-  uint8_t NumEncoderVals() const;
-  uint16_t GetContents() const;
-  int GetNumContentTypes() const;
-  // inline these two functions for small optimization, gprof indicates they
-  // are called frequently so inlining them saves some call overhead
-  inline uint16_t GetStartColumn() const;
-  inline uint16_t GetEndColumn() const;
+    // This should always be `1` with when using TCP
+    assert(1 == header.number_datagrams);
+    assert(0 == header.datagram_position);
 
-  std::vector<int64_t> GetEncoderValues() const;
-  uint16_t GetLaserOnTime() const;
-  uint16_t GetExposureTime() const;
+    // We assume the stride is consistent for all datatypes held in the profile
+    data_stride = ntohs(pu16[DatagramHeader::kSize / sizeof(uint16_t)]);
+    data_count = (header.end_column - header.start_column + 1) / data_stride;
 
-  inline FragmentLayout GetFragmentLayout(DataType type) const;
-  uint8_t *GetRawBytes(uint32_t *byte_len) const;
+    std::bitset<8 * sizeof(uint16_t)> contents_bits(header.data_type);
+    const uint32_t num_data_types = static_cast<int>(contents_bits.count());
 
- private:
-  std::map<DataType, FragmentLayout> fragment_layouts;
-  DatagramHeader m_hdr;
-  uint8_t *m_raw;
-  uint32_t m_raw_len;
-  int m_num_content_types;
-  std::vector<int64_t> m_encoders;
+    uint32_t offset = 0;
 
-  friend struct ProfileBuilder;
-};
+    // NOTE: The order of deserialization of the data is *very* important. Be
+    // extremely careful reordering any of the code below.
 
-inline FragmentLayout DataPacket::GetFragmentLayout(DataType type) const
-{
-  auto iter = fragment_layouts.find(type);
-  if (iter != fragment_layouts.end()) {
-    return iter->second;
+    offset = DatagramHeader::kSize + (num_data_types * sizeof(uint16_t));
+    int64_t *p_enc = reinterpret_cast<int64_t *>(&bytes[offset]);
+    for (uint32_t i = 0; i < header.number_encoders; i++) {
+      encoders.push_back(hostToNetwork<int64_t>(*p_enc++));
+      offset += sizeof(int64_t);
+    }
+
+    data_brightness = nullptr;
+    if (header.data_type & uint32_t(DataType::Brightness)) {
+      data_brightness = &bytes[offset];
+      offset += sizeof(uint8_t) * data_count;
+    }
+
+    data_xy = nullptr;
+    if (header.data_type & uint32_t(DataType::XYData)) {
+      data_xy = reinterpret_cast<int16_t *>(&bytes[offset]);
+      offset += 2 * sizeof(int16_t) * data_count;
+    }
+
+    data_subpixel = nullptr;
+    if (header.data_type & uint32_t(DataType::Subpixel)) {
+      // not used, skip...
+    }
   }
 
-  return FragmentLayout();
-}
+  DatagramHeader header;
+  std::vector<int64_t> encoders;
+  uint32_t data_stride;
+  uint32_t data_count;
+  int16_t* data_xy;
+  uint8_t* data_brightness;
+  uint16_t* data_subpixel;
+};
 
-inline uint16_t DataPacket::GetStartColumn() const
-{
-  return m_hdr.start_column;
-}
-
-inline uint16_t DataPacket::GetEndColumn() const
-{
-  return m_hdr.end_column;
-}
 } // namespace joescan
 
 #endif // JOESCAN_DATA_PACKET_H

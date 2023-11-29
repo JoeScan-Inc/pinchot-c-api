@@ -27,6 +27,7 @@ class NetworkInterface {
     std::string name;
     uint32_t ip_addr;
     uint32_t net_mask;
+    Client() : ip_addr(0), net_mask(0) {}
   };
 
   NetworkInterface();

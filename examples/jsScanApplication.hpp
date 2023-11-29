@@ -94,7 +94,7 @@ class ScanApplication {
   {
     jsScanSystemFree(m_scan_system);
   }
-  
+
   void SetSerialNumber(std::vector<uint32_t> &serial_numbers)
   {
     // Create scan head for each serial number passed in on the command line.
@@ -128,8 +128,8 @@ class ScanApplication {
     }
 
     m_config.laser_on_time_def_us = def_us;
-    m_config.laser_on_time_min_us = def_us;
-    m_config.laser_on_time_max_us = def_us;
+    m_config.laser_on_time_min_us = min_us;
+    m_config.laser_on_time_max_us = max_us;
   }
 
   void SetWindow(double top, double bottom, double left, double right)
@@ -355,6 +355,109 @@ class ScanApplication {
 
         r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
                                           JS_LASER_6);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+      }
+      break;
+
+    case (JS_SCAN_HEAD_JS50Z820):
+    case (JS_SCAN_HEAD_JS50Z830):
+      // Phase | Laser | Camera
+      //   1   |   1   |   B
+      //   2   |   5   |   A
+      //   3   |   2   |   B
+      //   4   |   6   |   A
+      //   5   |   3   |   B
+      //   6   |   7   |   A
+      //   7   |   4   |   B
+      //   8   |   8   |   A
+
+      for (auto scan_head : m_scan_heads) {
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_1);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_5);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_2);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_6);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_3);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_7);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_4);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        r = jsScanSystemPhaseCreate(m_scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        r = jsScanSystemPhaseInsertLaser(m_scan_system, scan_head,
+                                          JS_LASER_8);
         if (0 != r) {
           throw ApiError("failed to insert into phase", r);
         }

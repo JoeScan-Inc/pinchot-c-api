@@ -23,7 +23,7 @@ class TCPSocket : public NetworkInterface {
   ~TCPSocket() = default;
   int Send(flatbuffers::FlatBufferBuilder &builder);
   int Send(uint8_t *buf, uint32_t len);
-  inline int Read(uint8_t *buf, uint32_t len, bool *is_cancel_flag=nullptr);
+  inline int Read(uint8_t *buf, uint32_t len, volatile bool *is_cancel_flag=nullptr);
 
  private:
   inline int SelectWaitRead();
@@ -35,7 +35,7 @@ class TCPSocket : public NetworkInterface {
 /**
  * inline this function to get slightly faster profile reads
  */
-inline int TCPSocket::Read(uint8_t *buf, uint32_t len, bool *is_read_active)
+inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_active)
 {
   SOCKET fd = m_iface.sockfd;
   char *dst;
@@ -142,14 +142,16 @@ inline int TCPSocket::SelectWaitRead()
   do {
     FD_ZERO(&fds);
     FD_SET(sockfd, &fds);
-    tv.tv_sec = m_timeout_s;
+    tv.tv_sec = 1;
     tv.tv_usec = 0;
-    ptv = (0 != m_timeout_s) ? &tv : nullptr;
+    ptv = (0 != tv.tv_sec) ? &tv : nullptr;
 
     r = select(int(sockfd) + 1, &fds, NULL, NULL, ptv);
     if (0 < r) {
       // activity on file descriptor
       break;
+    } else if (0 == r) {
+      return 0;
     }
 
     // no activity on file descriptor
@@ -162,7 +164,7 @@ inline int TCPSocket::SelectWaitRead()
     check = WSAEINTR;
     err = WSAGetLastError();
 #endif
-    if ((err != check) || (0 == r)) {
+    if (err != check) {
       // timeout or error we don't handle
       NetworkInterface::Close();
       return JS_ERROR_NETWORK;
@@ -191,6 +193,8 @@ inline int TCPSocket::SelectWaitWrite()
     if (0 < r) {
       // activity on file descriptor
       break;
+    } else if (0 == r) {
+      return 0;
     }
 
     // no activity on file descriptor
@@ -203,7 +207,7 @@ inline int TCPSocket::SelectWaitWrite()
     check = WSAEINTR;
     err = WSAGetLastError();
 #endif
-    if ((err != check) || (0 == r)) {
+    if (err != check) {
       // timeout or error we don't handle
       NetworkInterface::Close();
       return JS_ERROR_NETWORK;

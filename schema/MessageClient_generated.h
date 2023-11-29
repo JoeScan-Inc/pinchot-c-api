@@ -6,6 +6,9 @@
 
 #include "flatbuffers/flatbuffers.h"
 
+#include "StoreInfoData_generated.h"
+#include "MessageClientEnums_generated.h"
+
 namespace joescan {
 namespace schema {
 namespace client {
@@ -50,6 +53,10 @@ struct BrightnessCorrectionData;
 struct BrightnessCorrectionDataBuilder;
 struct BrightnessCorrectionDataT;
 
+struct ScanStartData;
+struct ScanStartDataBuilder;
+struct ScanStartDataT;
+
 struct MessageClient;
 struct MessageClientBuilder;
 struct MessageClientT;
@@ -69,11 +76,12 @@ enum MessageType : uint16_t {
   MessageType_PROFILE_REQUEST = 11,
   MessageType_EXCLUSION_MASK = 12,
   MessageType_BRIGHTNESS_CORRECTION = 13,
+  MessageType_STORE_INFO = 14,
   MessageType_MIN = MessageType_NONE,
-  MessageType_MAX = MessageType_BRIGHTNESS_CORRECTION
+  MessageType_MAX = MessageType_STORE_INFO
 };
 
-inline const MessageType (&EnumValuesMessageType())[14] {
+inline const MessageType (&EnumValuesMessageType())[15] {
   static const MessageType values[] = {
     MessageType_NONE,
     MessageType_CONNECT,
@@ -88,13 +96,14 @@ inline const MessageType (&EnumValuesMessageType())[14] {
     MessageType_MAPPLE_REQUEST,
     MessageType_PROFILE_REQUEST,
     MessageType_EXCLUSION_MASK,
-    MessageType_BRIGHTNESS_CORRECTION
+    MessageType_BRIGHTNESS_CORRECTION,
+    MessageType_STORE_INFO
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageType() {
-  static const char * const names[15] = {
+  static const char * const names[16] = {
     "NONE",
     "CONNECT",
     "DISCONNECT",
@@ -109,75 +118,16 @@ inline const char * const *EnumNamesMessageType() {
     "PROFILE_REQUEST",
     "EXCLUSION_MASK",
     "BRIGHTNESS_CORRECTION",
+    "STORE_INFO",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageType(MessageType e) {
-  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_BRIGHTNESS_CORRECTION)) return "";
+  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_STORE_INFO)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageType()[index];
-}
-
-enum ConnectionType : uint16_t {
-  ConnectionType_NORMAL = 0,
-  ConnectionType_MAPPLER = 1,
-  ConnectionType_MIN = ConnectionType_NORMAL,
-  ConnectionType_MAX = ConnectionType_MAPPLER
-};
-
-inline const ConnectionType (&EnumValuesConnectionType())[2] {
-  static const ConnectionType values[] = {
-    ConnectionType_NORMAL,
-    ConnectionType_MAPPLER
-  };
-  return values;
-}
-
-inline const char * const *EnumNamesConnectionType() {
-  static const char * const names[3] = {
-    "NORMAL",
-    "MAPPLER",
-    nullptr
-  };
-  return names;
-}
-
-inline const char *EnumNameConnectionType(ConnectionType e) {
-  if (flatbuffers::IsOutRange(e, ConnectionType_NORMAL, ConnectionType_MAPPLER)) return "";
-  const size_t index = static_cast<size_t>(e);
-  return EnumNamesConnectionType()[index];
-}
-
-enum CameraOrientation : uint16_t {
-  CameraOrientation_UPSTREAM = 0,
-  CameraOrientation_DOWNSTREAM = 1,
-  CameraOrientation_MIN = CameraOrientation_UPSTREAM,
-  CameraOrientation_MAX = CameraOrientation_DOWNSTREAM
-};
-
-inline const CameraOrientation (&EnumValuesCameraOrientation())[2] {
-  static const CameraOrientation values[] = {
-    CameraOrientation_UPSTREAM,
-    CameraOrientation_DOWNSTREAM
-  };
-  return values;
-}
-
-inline const char * const *EnumNamesCameraOrientation() {
-  static const char * const names[3] = {
-    "UPSTREAM",
-    "DOWNSTREAM",
-    nullptr
-  };
-  return names;
-}
-
-inline const char *EnumNameCameraOrientation(CameraOrientation e) {
-  if (flatbuffers::IsOutRange(e, CameraOrientation_UPSTREAM, CameraOrientation_DOWNSTREAM)) return "";
-  const size_t index = static_cast<size_t>(e);
-  return EnumNamesCameraOrientation()[index];
 }
 
 enum MessageData : uint8_t {
@@ -190,11 +140,13 @@ enum MessageData : uint8_t {
   MessageData_ProfileRequestData = 6,
   MessageData_ExclusionMaskData = 7,
   MessageData_BrightnessCorrectionData = 8,
+  MessageData_ScanStartData = 9,
+  MessageData_StoreInfoData = 10,
   MessageData_MIN = MessageData_NONE,
-  MessageData_MAX = MessageData_BrightnessCorrectionData
+  MessageData_MAX = MessageData_StoreInfoData
 };
 
-inline const MessageData (&EnumValuesMessageData())[9] {
+inline const MessageData (&EnumValuesMessageData())[11] {
   static const MessageData values[] = {
     MessageData_NONE,
     MessageData_ConnectData,
@@ -204,13 +156,15 @@ inline const MessageData (&EnumValuesMessageData())[9] {
     MessageData_MappleRequestData,
     MessageData_ProfileRequestData,
     MessageData_ExclusionMaskData,
-    MessageData_BrightnessCorrectionData
+    MessageData_BrightnessCorrectionData,
+    MessageData_ScanStartData,
+    MessageData_StoreInfoData
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageData() {
-  static const char * const names[10] = {
+  static const char * const names[12] = {
     "NONE",
     "ConnectData",
     "ScanConfigurationData",
@@ -220,13 +174,15 @@ inline const char * const *EnumNamesMessageData() {
     "ProfileRequestData",
     "ExclusionMaskData",
     "BrightnessCorrectionData",
+    "ScanStartData",
+    "StoreInfoData",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageData(MessageData e) {
-  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_BrightnessCorrectionData)) return "";
+  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_StoreInfoData)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageData()[index];
 }
@@ -265,6 +221,14 @@ template<> struct MessageDataTraits<joescan::schema::client::ExclusionMaskData> 
 
 template<> struct MessageDataTraits<joescan::schema::client::BrightnessCorrectionData> {
   static const MessageData enum_value = MessageData_BrightnessCorrectionData;
+};
+
+template<> struct MessageDataTraits<joescan::schema::client::ScanStartData> {
+  static const MessageData enum_value = MessageData_ScanStartData;
+};
+
+template<> struct MessageDataTraits<joescan::schema::client::StoreInfoData> {
+  static const MessageData enum_value = MessageData_StoreInfoData;
 };
 
 struct MessageDataUnion {
@@ -363,6 +327,22 @@ struct MessageDataUnion {
     return type == MessageData_BrightnessCorrectionData ?
       reinterpret_cast<const joescan::schema::client::BrightnessCorrectionDataT *>(value) : nullptr;
   }
+  joescan::schema::client::ScanStartDataT *AsScanStartData() {
+    return type == MessageData_ScanStartData ?
+      reinterpret_cast<joescan::schema::client::ScanStartDataT *>(value) : nullptr;
+  }
+  const joescan::schema::client::ScanStartDataT *AsScanStartData() const {
+    return type == MessageData_ScanStartData ?
+      reinterpret_cast<const joescan::schema::client::ScanStartDataT *>(value) : nullptr;
+  }
+  joescan::schema::client::StoreInfoDataT *AsStoreInfoData() {
+    return type == MessageData_StoreInfoData ?
+      reinterpret_cast<joescan::schema::client::StoreInfoDataT *>(value) : nullptr;
+  }
+  const joescan::schema::client::StoreInfoDataT *AsStoreInfoData() const {
+    return type == MessageData_StoreInfoData ?
+      reinterpret_cast<const joescan::schema::client::StoreInfoDataT *>(value) : nullptr;
+  }
 };
 
 bool VerifyMessageData(flatbuffers::Verifier &verifier, const void *obj, MessageData type);
@@ -373,6 +353,7 @@ struct ConnectDataT : public flatbuffers::NativeTable {
   uint32_t scan_head_serial = 0;
   uint32_t scan_head_id = 0;
   joescan::schema::client::ConnectionType connection_type = joescan::schema::client::ConnectionType_NORMAL;
+  std::vector<std::string> notes{};
 };
 
 struct ConnectData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -381,7 +362,8 @@ struct ConnectData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SCAN_HEAD_SERIAL = 4,
     VT_SCAN_HEAD_ID = 6,
-    VT_CONNECTION_TYPE = 8
+    VT_CONNECTION_TYPE = 8,
+    VT_NOTES = 10
   };
   uint32_t scan_head_serial() const {
     return GetField<uint32_t>(VT_SCAN_HEAD_SERIAL, 0);
@@ -392,11 +374,17 @@ struct ConnectData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   joescan::schema::client::ConnectionType connection_type() const {
     return static_cast<joescan::schema::client::ConnectionType>(GetField<uint16_t>(VT_CONNECTION_TYPE, 0));
   }
+  const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *notes() const {
+    return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *>(VT_NOTES);
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_SCAN_HEAD_SERIAL) &&
            VerifyField<uint32_t>(verifier, VT_SCAN_HEAD_ID) &&
            VerifyField<uint16_t>(verifier, VT_CONNECTION_TYPE) &&
+           VerifyOffset(verifier, VT_NOTES) &&
+           verifier.VerifyVector(notes()) &&
+           verifier.VerifyVectorOfStrings(notes()) &&
            verifier.EndTable();
   }
   ConnectDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -417,6 +405,9 @@ struct ConnectDataBuilder {
   void add_connection_type(joescan::schema::client::ConnectionType connection_type) {
     fbb_.AddElement<uint16_t>(ConnectData::VT_CONNECTION_TYPE, static_cast<uint16_t>(connection_type), 0);
   }
+  void add_notes(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> notes) {
+    fbb_.AddOffset(ConnectData::VT_NOTES, notes);
+  }
   explicit ConnectDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -432,12 +423,29 @@ inline flatbuffers::Offset<ConnectData> CreateConnectData(
     flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t scan_head_serial = 0,
     uint32_t scan_head_id = 0,
-    joescan::schema::client::ConnectionType connection_type = joescan::schema::client::ConnectionType_NORMAL) {
+    joescan::schema::client::ConnectionType connection_type = joescan::schema::client::ConnectionType_NORMAL,
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> notes = 0) {
   ConnectDataBuilder builder_(_fbb);
+  builder_.add_notes(notes);
   builder_.add_scan_head_id(scan_head_id);
   builder_.add_scan_head_serial(scan_head_serial);
   builder_.add_connection_type(connection_type);
   return builder_.Finish();
+}
+
+inline flatbuffers::Offset<ConnectData> CreateConnectDataDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t scan_head_serial = 0,
+    uint32_t scan_head_id = 0,
+    joescan::schema::client::ConnectionType connection_type = joescan::schema::client::ConnectionType_NORMAL,
+    const std::vector<flatbuffers::Offset<flatbuffers::String>> *notes = nullptr) {
+  auto notes__ = notes ? _fbb.CreateVector<flatbuffers::Offset<flatbuffers::String>>(*notes) : 0;
+  return joescan::schema::client::CreateConnectData(
+      _fbb,
+      scan_head_serial,
+      scan_head_id,
+      connection_type,
+      notes__);
 }
 
 flatbuffers::Offset<ConnectData> CreateConnectData(flatbuffers::FlatBufferBuilder &_fbb, const ConnectDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -562,7 +570,6 @@ flatbuffers::Offset<CameraLaserConfiguration> CreateCameraLaserConfiguration(fla
 
 struct ScanConfigurationDataT : public flatbuffers::NativeTable {
   typedef ScanConfigurationData TableType;
-  uint16_t udp_port = 0;
   uint32_t data_type_mask = 0;
   uint32_t data_stride = 0;
   uint32_t scan_period_ns = 0;
@@ -576,7 +583,6 @@ struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
   typedef ScanConfigurationDataT NativeTableType;
   typedef ScanConfigurationDataBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_UDP_PORT = 4,
     VT_DATA_TYPE_MASK = 6,
     VT_DATA_STRIDE = 8,
     VT_SCAN_PERIOD_NS = 10,
@@ -585,9 +591,6 @@ struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_SATURATION_PERCENT = 16,
     VT_CAMERA_LASER_CONFIGURATIONS = 18
   };
-  uint16_t udp_port() const {
-    return GetField<uint16_t>(VT_UDP_PORT, 0);
-  }
   uint32_t data_type_mask() const {
     return GetField<uint32_t>(VT_DATA_TYPE_MASK, 0);
   }
@@ -611,7 +614,6 @@ struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
   }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint16_t>(verifier, VT_UDP_PORT) &&
            VerifyField<uint32_t>(verifier, VT_DATA_TYPE_MASK) &&
            VerifyField<uint32_t>(verifier, VT_DATA_STRIDE) &&
            VerifyField<uint32_t>(verifier, VT_SCAN_PERIOD_NS) &&
@@ -632,9 +634,6 @@ struct ScanConfigurationDataBuilder {
   typedef ScanConfigurationData Table;
   flatbuffers::FlatBufferBuilder &fbb_;
   flatbuffers::uoffset_t start_;
-  void add_udp_port(uint16_t udp_port) {
-    fbb_.AddElement<uint16_t>(ScanConfigurationData::VT_UDP_PORT, udp_port, 0);
-  }
   void add_data_type_mask(uint32_t data_type_mask) {
     fbb_.AddElement<uint32_t>(ScanConfigurationData::VT_DATA_TYPE_MASK, data_type_mask, 0);
   }
@@ -669,7 +668,6 @@ struct ScanConfigurationDataBuilder {
 
 inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(
     flatbuffers::FlatBufferBuilder &_fbb,
-    uint16_t udp_port = 0,
     uint32_t data_type_mask = 0,
     uint32_t data_stride = 0,
     uint32_t scan_period_ns = 0,
@@ -685,13 +683,11 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(
   builder_.add_scan_period_ns(scan_period_ns);
   builder_.add_data_stride(data_stride);
   builder_.add_data_type_mask(data_type_mask);
-  builder_.add_udp_port(udp_port);
   return builder_.Finish();
 }
 
 inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationDataDirect(
     flatbuffers::FlatBufferBuilder &_fbb,
-    uint16_t udp_port = 0,
     uint32_t data_type_mask = 0,
     uint32_t data_stride = 0,
     uint32_t scan_period_ns = 0,
@@ -702,7 +698,6 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationDataDir
   auto camera_laser_configurations__ = camera_laser_configurations ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>>(*camera_laser_configurations) : 0;
   return joescan::schema::client::CreateScanConfigurationData(
       _fbb,
-      udp_port,
       data_type_mask,
       data_stride,
       scan_period_ns,
@@ -722,6 +717,7 @@ struct ImageRequestDataT : public flatbuffers::NativeTable {
   uint32_t laser_on_time_ns = 0;
   uint32_t laser_detection_threshold = 0;
   uint32_t saturation_threshold = 0;
+  joescan::schema::client::ImageDataType image_data_type = joescan::schema::client::ImageDataType_MERGED_MASK_IMAGE;
 };
 
 struct ImageRequestData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -733,7 +729,8 @@ struct ImageRequestData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_CAMERA_EXPOSURE_NS = 8,
     VT_LASER_ON_TIME_NS = 10,
     VT_LASER_DETECTION_THRESHOLD = 12,
-    VT_SATURATION_THRESHOLD = 14
+    VT_SATURATION_THRESHOLD = 14,
+    VT_IMAGE_DATA_TYPE = 16
   };
   uint32_t camera_port() const {
     return GetField<uint32_t>(VT_CAMERA_PORT, 0);
@@ -753,6 +750,9 @@ struct ImageRequestData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   uint32_t saturation_threshold() const {
     return GetField<uint32_t>(VT_SATURATION_THRESHOLD, 0);
   }
+  joescan::schema::client::ImageDataType image_data_type() const {
+    return static_cast<joescan::schema::client::ImageDataType>(GetField<uint16_t>(VT_IMAGE_DATA_TYPE, 0));
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_CAMERA_PORT) &&
@@ -761,6 +761,7 @@ struct ImageRequestData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_LASER_ON_TIME_NS) &&
            VerifyField<uint32_t>(verifier, VT_LASER_DETECTION_THRESHOLD) &&
            VerifyField<uint32_t>(verifier, VT_SATURATION_THRESHOLD) &&
+           VerifyField<uint16_t>(verifier, VT_IMAGE_DATA_TYPE) &&
            verifier.EndTable();
   }
   ImageRequestDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -790,6 +791,9 @@ struct ImageRequestDataBuilder {
   void add_saturation_threshold(uint32_t saturation_threshold) {
     fbb_.AddElement<uint32_t>(ImageRequestData::VT_SATURATION_THRESHOLD, saturation_threshold, 0);
   }
+  void add_image_data_type(joescan::schema::client::ImageDataType image_data_type) {
+    fbb_.AddElement<uint16_t>(ImageRequestData::VT_IMAGE_DATA_TYPE, static_cast<uint16_t>(image_data_type), 0);
+  }
   explicit ImageRequestDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -808,7 +812,8 @@ inline flatbuffers::Offset<ImageRequestData> CreateImageRequestData(
     uint32_t camera_exposure_ns = 0,
     uint32_t laser_on_time_ns = 0,
     uint32_t laser_detection_threshold = 0,
-    uint32_t saturation_threshold = 0) {
+    uint32_t saturation_threshold = 0,
+    joescan::schema::client::ImageDataType image_data_type = joescan::schema::client::ImageDataType_MERGED_MASK_IMAGE) {
   ImageRequestDataBuilder builder_(_fbb);
   builder_.add_saturation_threshold(saturation_threshold);
   builder_.add_laser_detection_threshold(laser_detection_threshold);
@@ -816,6 +821,7 @@ inline flatbuffers::Offset<ImageRequestData> CreateImageRequestData(
   builder_.add_camera_exposure_ns(camera_exposure_ns);
   builder_.add_laser_port(laser_port);
   builder_.add_camera_port(camera_port);
+  builder_.add_image_data_type(image_data_type);
   return builder_.Finish();
 }
 
@@ -1365,6 +1371,58 @@ inline flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionD
 
 flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionData(flatbuffers::FlatBufferBuilder &_fbb, const BrightnessCorrectionDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct ScanStartDataT : public flatbuffers::NativeTable {
+  typedef ScanStartData TableType;
+  uint64_t start_time_ns = 0;
+};
+
+struct ScanStartData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef ScanStartDataT NativeTableType;
+  typedef ScanStartDataBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_START_TIME_NS = 4
+  };
+  uint64_t start_time_ns() const {
+    return GetField<uint64_t>(VT_START_TIME_NS, 0);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_START_TIME_NS) &&
+           verifier.EndTable();
+  }
+  ScanStartDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ScanStartDataT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<ScanStartData> Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanStartDataT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ScanStartDataBuilder {
+  typedef ScanStartData Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_start_time_ns(uint64_t start_time_ns) {
+    fbb_.AddElement<uint64_t>(ScanStartData::VT_START_TIME_NS, start_time_ns, 0);
+  }
+  explicit ScanStartDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<ScanStartData> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<ScanStartData>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<ScanStartData> CreateScanStartData(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t start_time_ns = 0) {
+  ScanStartDataBuilder builder_(_fbb);
+  builder_.add_start_time_ns(start_time_ns);
+  return builder_.Finish();
+}
+
+flatbuffers::Offset<ScanStartData> CreateScanStartData(flatbuffers::FlatBufferBuilder &_fbb, const ScanStartDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct MessageClientT : public flatbuffers::NativeTable {
   typedef MessageClient TableType;
   joescan::schema::client::MessageType type = joescan::schema::client::MessageType_NONE;
@@ -1413,6 +1471,12 @@ struct MessageClient FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const joescan::schema::client::BrightnessCorrectionData *data_as_BrightnessCorrectionData() const {
     return data_type() == joescan::schema::client::MessageData_BrightnessCorrectionData ? static_cast<const joescan::schema::client::BrightnessCorrectionData *>(data()) : nullptr;
   }
+  const joescan::schema::client::ScanStartData *data_as_ScanStartData() const {
+    return data_type() == joescan::schema::client::MessageData_ScanStartData ? static_cast<const joescan::schema::client::ScanStartData *>(data()) : nullptr;
+  }
+  const joescan::schema::client::StoreInfoData *data_as_StoreInfoData() const {
+    return data_type() == joescan::schema::client::MessageData_StoreInfoData ? static_cast<const joescan::schema::client::StoreInfoData *>(data()) : nullptr;
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint16_t>(verifier, VT_TYPE) &&
@@ -1456,6 +1520,14 @@ template<> inline const joescan::schema::client::ExclusionMaskData *MessageClien
 
 template<> inline const joescan::schema::client::BrightnessCorrectionData *MessageClient::data_as<joescan::schema::client::BrightnessCorrectionData>() const {
   return data_as_BrightnessCorrectionData();
+}
+
+template<> inline const joescan::schema::client::ScanStartData *MessageClient::data_as<joescan::schema::client::ScanStartData>() const {
+  return data_as_ScanStartData();
+}
+
+template<> inline const joescan::schema::client::StoreInfoData *MessageClient::data_as<joescan::schema::client::StoreInfoData>() const {
+  return data_as_StoreInfoData();
 }
 
 struct MessageClientBuilder {
@@ -1508,6 +1580,7 @@ inline void ConnectData::UnPackTo(ConnectDataT *_o, const flatbuffers::resolver_
   { auto _e = scan_head_serial(); _o->scan_head_serial = _e; }
   { auto _e = scan_head_id(); _o->scan_head_id = _e; }
   { auto _e = connection_type(); _o->connection_type = _e; }
+  { auto _e = notes(); if (_e) { _o->notes.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->notes[_i] = _e->Get(_i)->str(); } } }
 }
 
 inline flatbuffers::Offset<ConnectData> ConnectData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ConnectDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -1521,11 +1594,13 @@ inline flatbuffers::Offset<ConnectData> CreateConnectData(flatbuffers::FlatBuffe
   auto _scan_head_serial = _o->scan_head_serial;
   auto _scan_head_id = _o->scan_head_id;
   auto _connection_type = _o->connection_type;
+  auto _notes = _o->notes.size() ? _fbb.CreateVectorOfStrings(_o->notes) : 0;
   return joescan::schema::client::CreateConnectData(
       _fbb,
       _scan_head_serial,
       _scan_head_id,
-      _connection_type);
+      _connection_type,
+      _notes);
 }
 
 inline CameraLaserConfigurationT *CameraLaserConfiguration::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
@@ -1581,7 +1656,6 @@ inline ScanConfigurationDataT *ScanConfigurationData::UnPack(const flatbuffers::
 inline void ScanConfigurationData::UnPackTo(ScanConfigurationDataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
   (void)_o;
   (void)_resolver;
-  { auto _e = udp_port(); _o->udp_port = _e; }
   { auto _e = data_type_mask(); _o->data_type_mask = _e; }
   { auto _e = data_stride(); _o->data_stride = _e; }
   { auto _e = scan_period_ns(); _o->scan_period_ns = _e; }
@@ -1599,7 +1673,6 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(fl
   (void)_rehasher;
   (void)_o;
   struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const ScanConfigurationDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
-  auto _udp_port = _o->udp_port;
   auto _data_type_mask = _o->data_type_mask;
   auto _data_stride = _o->data_stride;
   auto _scan_period_ns = _o->scan_period_ns;
@@ -1609,7 +1682,6 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(fl
   auto _camera_laser_configurations = _o->camera_laser_configurations.size() ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>> (_o->camera_laser_configurations.size(), [](size_t i, _VectorArgs *__va) { return CreateCameraLaserConfiguration(*__va->__fbb, __va->__o->camera_laser_configurations[i].get(), __va->__rehasher); }, &_va ) : 0;
   return joescan::schema::client::CreateScanConfigurationData(
       _fbb,
-      _udp_port,
       _data_type_mask,
       _data_stride,
       _scan_period_ns,
@@ -1634,6 +1706,7 @@ inline void ImageRequestData::UnPackTo(ImageRequestDataT *_o, const flatbuffers:
   { auto _e = laser_on_time_ns(); _o->laser_on_time_ns = _e; }
   { auto _e = laser_detection_threshold(); _o->laser_detection_threshold = _e; }
   { auto _e = saturation_threshold(); _o->saturation_threshold = _e; }
+  { auto _e = image_data_type(); _o->image_data_type = _e; }
 }
 
 inline flatbuffers::Offset<ImageRequestData> ImageRequestData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ImageRequestDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -1650,6 +1723,7 @@ inline flatbuffers::Offset<ImageRequestData> CreateImageRequestData(flatbuffers:
   auto _laser_on_time_ns = _o->laser_on_time_ns;
   auto _laser_detection_threshold = _o->laser_detection_threshold;
   auto _saturation_threshold = _o->saturation_threshold;
+  auto _image_data_type = _o->image_data_type;
   return joescan::schema::client::CreateImageRequestData(
       _fbb,
       _camera_port,
@@ -1657,7 +1731,8 @@ inline flatbuffers::Offset<ImageRequestData> CreateImageRequestData(flatbuffers:
       _camera_exposure_ns,
       _laser_on_time_ns,
       _laser_detection_threshold,
-      _saturation_threshold);
+      _saturation_threshold,
+      _image_data_type);
 }
 
 inline ProfileRequestDataT *ProfileRequestData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
@@ -1867,6 +1942,32 @@ inline flatbuffers::Offset<BrightnessCorrectionData> CreateBrightnessCorrectionD
       _scale_factors);
 }
 
+inline ScanStartDataT *ScanStartData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ScanStartDataT>(new ScanStartDataT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ScanStartData::UnPackTo(ScanStartDataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = start_time_ns(); _o->start_time_ns = _e; }
+}
+
+inline flatbuffers::Offset<ScanStartData> ScanStartData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanStartDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateScanStartData(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<ScanStartData> CreateScanStartData(flatbuffers::FlatBufferBuilder &_fbb, const ScanStartDataT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const ScanStartDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _start_time_ns = _o->start_time_ns;
+  return joescan::schema::client::CreateScanStartData(
+      _fbb,
+      _start_time_ns);
+}
+
 inline MessageClientT *MessageClient::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<MessageClientT>(new MessageClientT());
   UnPackTo(_o.get(), _resolver);
@@ -1936,6 +2037,14 @@ inline bool VerifyMessageData(flatbuffers::Verifier &verifier, const void *obj, 
       auto ptr = reinterpret_cast<const joescan::schema::client::BrightnessCorrectionData *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case MessageData_ScanStartData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ScanStartData *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessageData_StoreInfoData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::StoreInfoData *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -1986,6 +2095,14 @@ inline void *MessageDataUnion::UnPack(const void *obj, MessageData type, const f
       auto ptr = reinterpret_cast<const joescan::schema::client::BrightnessCorrectionData *>(obj);
       return ptr->UnPack(resolver);
     }
+    case MessageData_ScanStartData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ScanStartData *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessageData_StoreInfoData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::StoreInfoData *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -2024,6 +2141,14 @@ inline flatbuffers::Offset<void> MessageDataUnion::Pack(flatbuffers::FlatBufferB
       auto ptr = reinterpret_cast<const joescan::schema::client::BrightnessCorrectionDataT *>(value);
       return CreateBrightnessCorrectionData(_fbb, ptr, _rehasher).Union();
     }
+    case MessageData_ScanStartData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ScanStartDataT *>(value);
+      return CreateScanStartData(_fbb, ptr, _rehasher).Union();
+    }
+    case MessageData_StoreInfoData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::StoreInfoDataT *>(value);
+      return CreateStoreInfoData(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -2060,6 +2185,14 @@ inline MessageDataUnion::MessageDataUnion(const MessageDataUnion &u) : type(u.ty
     }
     case MessageData_BrightnessCorrectionData: {
       value = new joescan::schema::client::BrightnessCorrectionDataT(*reinterpret_cast<joescan::schema::client::BrightnessCorrectionDataT *>(u.value));
+      break;
+    }
+    case MessageData_ScanStartData: {
+      value = new joescan::schema::client::ScanStartDataT(*reinterpret_cast<joescan::schema::client::ScanStartDataT *>(u.value));
+      break;
+    }
+    case MessageData_StoreInfoData: {
+      value = new joescan::schema::client::StoreInfoDataT(*reinterpret_cast<joescan::schema::client::StoreInfoDataT *>(u.value));
       break;
     }
     default:
@@ -2106,6 +2239,16 @@ inline void MessageDataUnion::Reset() {
     }
     case MessageData_BrightnessCorrectionData: {
       auto ptr = reinterpret_cast<joescan::schema::client::BrightnessCorrectionDataT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessageData_ScanStartData: {
+      auto ptr = reinterpret_cast<joescan::schema::client::ScanStartDataT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessageData_StoreInfoData: {
+      auto ptr = reinterpret_cast<joescan::schema::client::StoreInfoDataT *>(value);
       delete ptr;
       break;
     }

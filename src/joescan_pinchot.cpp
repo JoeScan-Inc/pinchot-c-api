@@ -7,13 +7,14 @@
 
 #include "joescan_pinchot.h"
 #include "BroadcastDiscover.hpp"
+#include "FlatbufferMessages.hpp"
 #include "NetworkInterface.hpp"
+#include "ProfileQueue.hpp"
+#include "RawProfileToProfile.hpp"
 #include "ScanHead.hpp"
 #include "ScanManager.hpp"
+#include "ScanSync.hpp"
 #include "Version.hpp"
-
-#include "MessageUpdateClient_generated.h"
-#include "MessageUpdateServer_generated.h"
 
 #include <algorithm>
 #include <chrono>
@@ -27,7 +28,10 @@ using namespace joescan;
 #define INVALID_DOUBLE(d) (std::isinf((d)) || std::isnan((d)))
 
 static std::map<uint32_t, ScanManager*> _uid_to_scan_manager;
-static int _network_init_count = 0;
+static ScanSync _scansync;
+// TODO: change this from a static local variable to being a member of
+// ScanSystem struct when we refactor.
+static bool _is_frame_scanning = false;
 
 static ScanManager *_get_scan_manager_object(jsScanSystem scan_system)
 {
@@ -149,11 +153,46 @@ void jsGetError(int32_t return_code, const char **error_str)
       case (JS_ERROR_USE_LASER_FUNCTION):
         *error_str = "wrong function called, use Laser variant function";
         break;
+      case (JS_ERROR_FRAME_SCANNING):
+        *error_str = "not supported with frame scanning";
+        break;
+      case (JS_ERROR_NOT_FRAME_SCANNING):
+        *error_str = "only supported with frame scanning";
+        break;
+      case (JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE):
+        *error_str = "phase table not compatible with frame scanning";
+        break;
       case (JS_ERROR_UNKNOWN):
       default:
         *error_str = "unknown error";
     }
   }
+}
+
+EXPORTED
+void jsProfileInit(jsProfile *profile)
+{
+  if (nullptr == profile) {
+    return;
+  }
+
+  profile->timestamp_ns = 0;
+  profile->format = JS_DATA_FORMAT_INVALID;
+  profile->data_len = 0;
+}
+
+EXPORTED
+void jsRawProfileInit(jsRawProfile *profile)
+{
+  if (nullptr == profile) {
+    return;
+  }
+
+  profile->timestamp_ns = 0;
+  profile->format = JS_DATA_FORMAT_INVALID;
+  profile->data_len = 0;
+  profile->data_valid_brightness = 0;
+  profile->data_valid_xy = 0;
 }
 
 EXPORTED
@@ -219,7 +258,7 @@ jsScanSystem jsScanSystemCreate(jsUnits units)
   }
 
   try {
-    ScanManager *manager = new ScanManager(units);
+    ScanManager *manager = new ScanManager(units, &_scansync);
     _uid_to_scan_manager[manager->GetUID()] = manager;
     scan_system = _get_jsScanSystem(manager);
   } catch (std::exception &e) {
@@ -287,6 +326,38 @@ int jsScanSystemGetDiscovered(jsScanSystem scan_system,
     }
 
     r = manager->ScanHeadsDiscovered(results, max_results);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int jsScanSystemGetEncoder(jsScanSystem scan_system, jsEncoder encoder,
+                           int64_t *value)
+{
+  int r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (JS_ENCODER_MAIN != encoder) {
+      // TODO: Change when we support multiple encoders
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    scansync_data data;
+    r = _scansync.GetData(&data);
+    if (0 != r) {
+      return r;
+    }
+
+    *value = data.encoder;
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -774,6 +845,10 @@ int32_t jsScanSystemGetMinScanPeriod(jsScanSystem scan_system)
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
+    if (!manager->IsConnected()) {
+      return JS_ERROR_NOT_CONNECTED;
+    }
+
     period_us = manager->GetMinScanPeriod();
   } catch (std::exception &e) {
     (void)e;
@@ -781,6 +856,48 @@ int32_t jsScanSystemGetMinScanPeriod(jsScanSystem scan_system)
   }
 
   return (int32_t)period_us;
+}
+
+EXPORTED
+bool jsScanSystemIsConfigured(
+  jsScanSystem scan_system)
+{
+  bool is_configured = false;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return false;
+    }
+
+    is_configured = manager->IsConfigured();
+  } catch (std::exception &e) {
+    (void)e;
+    return false;
+  }
+
+  return is_configured;
+}
+
+EXPORTED
+int32_t jsScanSystemConfigure(
+  jsScanSystem scan_system)
+{
+  int32_t r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    r = manager->Configure();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
 }
 
 EXPORTED
@@ -816,6 +933,183 @@ int32_t jsScanSystemStopScanning(jsScanSystem scan_system)
     }
 
     r = manager->StopScanning();
+    if (0 == r) {
+      _is_frame_scanning = false;
+    }
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemStartFrameScanning(
+  jsScanSystem scan_system,
+  uint32_t period_us,
+  jsDataFormat fmt)
+{
+  int32_t r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    PhaseTable *phase_table = manager->GetPhaseTable();
+    if (phase_table->HasDuplicateElements()) {
+      return JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE;
+    }
+
+    r = manager->StartScanning(period_us, fmt, true);
+    if (0 == r) {
+      _is_frame_scanning = true;
+    }
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemGetProfilesPerFrame(
+  jsScanSystem scan_system)
+{
+  int32_t r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    r = manager->GetProfilesPerFrame();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemWaitUntilFrameAvailable(
+  jsScanSystem scan_system,
+  uint32_t timeout_us)
+{
+  int32_t r = 0;
+
+  try {
+    if (!_is_frame_scanning) {
+      return JS_ERROR_NOT_FRAME_SCANNING;
+    }
+
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    r = manager->WaitUntilFrameAvailable(timeout_us);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+bool jsScanSystemIsFrameAvailable(
+  jsScanSystem scan_system)
+{
+  try {
+    if (!_is_frame_scanning) {
+      return false;
+    }
+
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr != manager) {
+      int32_t r = manager->WaitUntilFrameAvailable(0);
+      if (0 < r) {
+        return true;
+      }
+    }
+  } catch (std::exception &e) {
+    (void)e;
+  }
+
+  return false;
+}
+
+EXPORTED
+int32_t jsScanSystemGetFrame(
+  jsScanSystem scan_system,
+  jsProfile *profiles)
+{
+  int32_t r = 0;
+
+  try {
+    if (!_is_frame_scanning) {
+      return JS_ERROR_NOT_FRAME_SCANNING;
+    }
+
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    r = manager->GetFrame(profiles);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemClearFrames(
+  jsScanSystem scan_system)
+{
+  int32_t r = 0;
+
+  try {
+    if (!_is_frame_scanning) {
+      return JS_ERROR_NOT_FRAME_SCANNING;
+    }
+
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    r = manager->ClearFrames();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemGetRawFrame(
+  jsScanSystem scan_system,
+  jsRawProfile *profiles)
+{
+  int32_t r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_ARGUMENT;
+    }
+
+    r = manager->GetFrame(profiles);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1090,10 +1384,6 @@ int32_t jsScanHeadSetAlignment(jsScanHead scan_head, double roll_degrees,
     }
 
     r = sh->SetAlignment(roll_degrees, shift_x, shift_y);
-    if ((0 == r) && sh->IsConnected()) {
-      // changing alignment changes the window
-      r = sh->SendWindow();
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1121,10 +1411,6 @@ int32_t jsScanHeadSetAlignmentCamera(jsScanHead scan_head, jsCamera camera,
     }
 
     r = sh->SetAlignment(camera, roll_degrees, shift_x, shift_y);
-    if ((0 == r) && sh->IsConnected()) {
-      // changing alignment changes the window
-      r = sh->SendWindow(camera);
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1180,10 +1466,6 @@ int32_t jsScanHeadSetAlignmentLaser(jsScanHead scan_head, jsLaser laser,
     }
 
     r = sh->SetAlignment(laser, roll_degrees, shift_x, shift_y);
-    if ((0 == r) && sh->IsConnected()) {
-      // changing alignment changes the window
-      r = sh->SendWindow(sh->GetPairedCamera(laser));
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1238,9 +1520,6 @@ EXPORTED int32_t jsScanHeadSetExclusionMaskCamera(
     }
 
     r = sh->SetExclusionMask(camera, mask);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendExclusionMask(camera);
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1267,9 +1546,6 @@ EXPORTED int32_t jsScanHeadSetExclusionMaskLaser(
     }
 
     r = sh->SetExclusionMask(laser, mask);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendExclusionMask(laser);
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1348,9 +1624,6 @@ EXPORTED int32_t jsScanHeadSetBrightnessCorrectionCamera_BETA(
     }
 
     r = sh->SetBrightnessCorrection(camera, correction);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendBrightnessCorrection(camera);
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1377,9 +1650,6 @@ EXPORTED int32_t jsScanHeadSetBrightnessCorrectionLaser_BETA(
     }
 
     r = sh->SetBrightnessCorrection(laser, correction);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendBrightnessCorrection(laser);
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1544,9 +1814,6 @@ int32_t jsScanHeadSetWindowRectangular(jsScanHead scan_head, double window_top,
 
     ScanWindow window(window_top, window_bottom, window_left, window_right);
     r = sh->SetWindow(window);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendWindow();
-    }
   } catch (std::range_error &e) {
     (void)e;
     r = JS_ERROR_INVALID_ARGUMENT;
@@ -1581,9 +1848,6 @@ EXPORTED int32_t jsScanHeadSetWindowRectangularCamera(
 
     ScanWindow window(window_top, window_bottom, window_left, window_right);
     r = sh->SetWindow(camera, window);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendWindow();
-    }
   } catch (std::range_error &e) {
     (void)e;
     r = JS_ERROR_INVALID_ARGUMENT;
@@ -1618,9 +1882,6 @@ EXPORTED int32_t jsScanHeadSetWindowRectangularLaser(
 
     ScanWindow window(window_top, window_bottom, window_left, window_right);
     r = sh->SetWindow(laser, window);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendWindow();
-    }
   } catch (std::range_error &e) {
     (void)e;
     r = JS_ERROR_INVALID_ARGUMENT;
@@ -1650,9 +1911,6 @@ EXPORTED int32_t jsScanHeadSetPolygonWindow(
     }
 
     r = sh->SetPolygonWindow(points, points_len);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendWindow();
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1680,9 +1938,6 @@ EXPORTED int32_t jsScanHeadSetPolygonWindowCamera(
     }
 
     r = sh->SetPolygonWindow(camera, points, points_len);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendWindow();
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1710,9 +1965,6 @@ EXPORTED int32_t jsScanHeadSetPolygonWindowLaser(
     }
 
     r = sh->SetPolygonWindow(laser, points, points_len);
-    if ((0 == r) && sh->IsConnected()) {
-      r = sh->SendWindow();
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1741,8 +1993,11 @@ int32_t jsScanHeadGetStatus(jsScanHead scan_head, jsScanHeadStatus *status)
 
     if (false == manager.IsConnected()) {
       return JS_ERROR_NOT_CONNECTED;
-    } else if (0 != sh->GetStatusMessage(&msg)) {
-      return JS_ERROR_INTERNAL;
+    }
+
+    r = sh->GetStatusMessage(&msg);
+    if (0 != r) {
+      return r;
     }
 
     memcpy(status, &msg.user, sizeof(jsScanHeadStatus));
@@ -1827,12 +2082,17 @@ int32_t jsScanHeadClearProfiles(jsScanHead scan_head)
   int32_t r = 0;
 
   try {
+    if (_is_frame_scanning) {
+      return JS_ERROR_FRAME_SCANNING;
+    }
+
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
-    sh->ClearProfiles();
+    auto queue = sh->GetProfileQueue();
+    queue->Reset(ProfileQueue::MODE_SINGLE);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1848,6 +2108,10 @@ int32_t jsScanHeadGetRawProfiles(jsScanHead scan_head, jsRawProfile *profiles,
   int32_t r = 0;
 
   try {
+    if (_is_frame_scanning) {
+      return JS_ERROR_FRAME_SCANNING;
+    }
+
     if (nullptr == profiles) {
       return JS_ERROR_NULL_ARGUMENT;
     }
@@ -1857,7 +2121,20 @@ int32_t jsScanHeadGetRawProfiles(jsScanHead scan_head, jsRawProfile *profiles,
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
-    r = sh->GetProfiles(profiles, max_profiles);
+    auto queue = sh->GetProfileQueue();
+    jsRawProfile *p = nullptr;
+    int32_t n = 0;
+
+    while (max_profiles--) {
+      if (0 != queue->DequeueReady(&p)) {
+        break;
+      }
+      profiles[n++] = *p;
+      // this should never fail
+      assert(0 == queue->EnqueueFree(&p));
+    }
+
+    r = int32_t(n);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1873,6 +2150,10 @@ int32_t jsScanHeadGetProfiles(jsScanHead scan_head, jsProfile *profiles,
   int32_t r = 0;
 
   try {
+    if (_is_frame_scanning) {
+      return JS_ERROR_FRAME_SCANNING;
+    }
+
     if (nullptr == profiles) {
       return JS_ERROR_NULL_ARGUMENT;
     }
@@ -1882,7 +2163,21 @@ int32_t jsScanHeadGetProfiles(jsScanHead scan_head, jsProfile *profiles,
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
-    r = sh->GetProfiles(profiles, max_profiles);
+    auto queue = sh->GetProfileQueue();
+    jsRawProfile *p = nullptr;
+    int32_t n = 0;
+
+    while (max_profiles--) {
+      if (0 != queue->DequeueReady(&p)) {
+        break;
+      }
+      RawProfileToProfile(p, &profiles[n++]);
+      // this should never fail
+      r = queue->EnqueueFree(&p);
+      assert(0 == r);
+    }
+
+    r = int32_t(n);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
