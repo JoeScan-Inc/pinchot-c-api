@@ -22,14 +22,12 @@ the API is to be used. For new users, it is recommended to begin with
 In order to build the API and software examples in Windows 10, the following
 tools should be installed.
 - CMake
-- Python 3
 - Visual Studio 2019/2017/2015
 
 For Linux, the following tools must be installed in order to build the API and
 software.
 - CMake
 - Make
-- Python 3
 - g++
 
 ## Build Instructions
