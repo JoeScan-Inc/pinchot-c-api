@@ -323,9 +323,18 @@ int ScanManager::StartScanning(uint32_t period_us, jsDataFormat fmt,
     start_time_ns = data.timestamp_ns + kStartTimeOffsetNs;
   }
 
+  if (is_frame_scanning) {
+    auto const &scan_head_to_pairs = m_phase_table.GetScheduledPairsPerScanHead();
+    for (auto const &pair : scan_head_to_pairs) {
+      ScanHead *sh = pair.first;
+      sh->GetProfileQueue()->SetValidPairs(pair.second);
+    }
+  }
+
   for (auto const &pair : m_serial_to_scan_head) {
-    ScanHead *scan_head = pair.second;
-    r = scan_head->StartScanning(start_time_ns, is_frame_scanning);
+    ScanHead *sh = pair.second;
+
+    r = sh->StartScanning(start_time_ns, is_frame_scanning);
     if (0 != r) {
       return r;
     }
@@ -344,11 +353,11 @@ int ScanManager::StartScanning(uint32_t period_us, jsDataFormat fmt,
   return 0;
 }
 
-uint32_t ScanManager::GetProfilesPerFrame()
+uint32_t ScanManager::GetProfilesPerFrame() const
 {
   uint32_t n = 0;
 
-  for (auto &p : m_id_to_scan_head) {
+  for (auto& p : m_id_to_scan_head) {
     auto sh = p.second;
     n += sh->GetCameraLaserPairCount();
   }
@@ -505,7 +514,6 @@ int32_t ScanManager::GetFrame(jsRawProfile *profiles)
     auto sh = p.second;
     auto queue = sh->GetProfileQueue();
     auto iter = CameraLaserIterator(sh);
-
 
     if (JS_CABLE_ORIENTATION_DOWNSTREAM == sh->GetCableOrientation()) {
       iter.reverse();

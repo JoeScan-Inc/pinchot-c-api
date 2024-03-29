@@ -14,10 +14,10 @@ UDPBroadcastSocket::UDPBroadcastSocket(uint32_t ip, uint16_t port) :
 
   // call to `NetworkInterface::Open()` is done in `UDPSocket::UDPSocket()`
 
-#if __linux__
-  int bcast_en = 1;
-#else
+#if _WIN32
   char bcast_en = 1;
+#else
+  int bcast_en = 1;
 #endif
   r = setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &bcast_en, sizeof(bcast_en));
   if (SOCKET_ERROR == r) {
@@ -26,13 +26,13 @@ UDPBroadcastSocket::UDPBroadcastSocket(uint32_t ip, uint16_t port) :
     throw std::runtime_error(e);
   }
 
-#if __linux__
+#if _WIN32
+  u_long mode = 1; // 1 to enable non-blocking socket
+  ioctlsocket(sockfd, FIONBIO, &mode);
+#else
   int flags = fcntl(sockfd, F_GETFL, 0);
   assert(flags != -1);
   fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-#else
-  u_long mode = 1; // 1 to enable non-blocking socket
-  ioctlsocket(sockfd, FIONBIO, &mode);
 #endif
 }
 

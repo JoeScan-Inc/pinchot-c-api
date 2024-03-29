@@ -42,8 +42,7 @@ void NetworkInterface::Open()
 {
   m_mutex.lock();
   if (0 <= m_ref_count) {
-#ifdef __linux__
-#else
+#ifdef _WIN32
     WSADATA wsa;
     int result = WSAStartup(MAKEWORD(2, 2), &wsa);
     if (result != 0) {
@@ -63,14 +62,14 @@ void NetworkInterface::Close()
     return;
   }
 
-#ifdef __linux__
-  shutdown(m_iface.sockfd, SHUT_RDWR);
-  close(m_iface.sockfd);
-#else
+#ifdef _WIN32
   int lastError = WSAGetLastError();
   shutdown(m_iface.sockfd, SD_BOTH);
   closesocket(m_iface.sockfd);
   WSASetLastError(lastError);
+#else
+  shutdown(m_iface.sockfd, SHUT_RDWR);
+  close(m_iface.sockfd);
 #endif
   m_iface.sockfd = INVALID_SOCKET;
   m_iface.ip_addr = 0;
@@ -80,8 +79,7 @@ void NetworkInterface::Close()
   m_ref_count--;
 
   if (0 >= m_ref_count) {
-#ifdef __linux__
-#else
+#ifdef _WIN32
     WSACleanup();
 #endif
   }
@@ -130,9 +128,12 @@ int NetworkInterface::ResolveIpAddressMDNS(uint32_t serial_number, uint32_t *ip)
   return 0;
 }
 
-uint32_t NetworkInterface::parseIPV4string(char *ip_str) {
+uint32_t NetworkInterface::parseIPV4string(char *ip_str)
+{
   uint32_t ipbytes[4];
-  int r = sscanf(ip_str, "%d.%d.%d.%d", &ipbytes[3], &ipbytes[2], &ipbytes[1], &ipbytes[0]);
+  int r = sscanf(ip_str,
+                 "%d.%d.%d.%d",
+                 &ipbytes[3], &ipbytes[2], &ipbytes[1], &ipbytes[0]);
   // disregard return value
   (void)r;
   return ipbytes[0] | ipbytes[1] << 8 | ipbytes[2] << 16 | ipbytes[3] << 24;
@@ -142,7 +143,41 @@ std::vector<NetworkInterface::Client> NetworkInterface::GetClientInterfaces()
 {
   std::vector<Client> ifaces;
 
-#ifdef __linux__
+#ifdef _WIN32
+  {
+    PIP_ADAPTER_INFO pAdapterInfo = nullptr;
+    pAdapterInfo = (IP_ADAPTER_INFO*)malloc(sizeof(IP_ADAPTER_INFO));
+    ULONG buflen = sizeof(IP_ADAPTER_INFO);
+
+    if (ERROR_BUFFER_OVERFLOW == GetAdaptersInfo(pAdapterInfo, &buflen)) {
+      free(pAdapterInfo);
+      pAdapterInfo = (IP_ADAPTER_INFO*)malloc(buflen);
+    }
+
+    if (NO_ERROR == GetAdaptersInfo(pAdapterInfo, &buflen)) {
+      PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
+      while (pAdapter) {
+        Client iface;
+        iface.name = std::string(pAdapter->Description);
+        iface.ip_addr =
+          parseIPV4string(pAdapter->IpAddressList.IpAddress.String);
+        iface.net_mask =
+          parseIPV4string(pAdapter->IpAddressList.IpMask.String);
+
+        if ((0 != iface.ip_addr) && (INADDR_LOOPBACK != iface.ip_addr)) {
+          ifaces.push_back(iface);
+        }
+        pAdapter = pAdapter->Next;
+      }
+    } else {
+      throw std::runtime_error("Failed to obtain network interfaces");
+    }
+
+    if (nullptr != pAdapterInfo) {
+      free(pAdapterInfo);
+    }
+  }
+#else
   {
     // BSD-style implementation
     struct ifaddrs *root_ifa;
@@ -169,37 +204,6 @@ std::vector<NetworkInterface::Client> NetworkInterface::GetClientInterfaces()
       freeifaddrs(root_ifa);
     } else {
       throw std::runtime_error("Failed to obtain network interfaces");
-    }
-  }
-#else
-  {
-    PIP_ADAPTER_INFO pAdapterInfo = nullptr;
-    pAdapterInfo = (IP_ADAPTER_INFO*)malloc(sizeof(IP_ADAPTER_INFO));
-    ULONG buflen = sizeof(IP_ADAPTER_INFO);
-
-    if (ERROR_BUFFER_OVERFLOW == GetAdaptersInfo(pAdapterInfo, &buflen)) {
-      free(pAdapterInfo);
-      pAdapterInfo = (IP_ADAPTER_INFO*)malloc(buflen);
-    }
-
-    if (NO_ERROR == GetAdaptersInfo(pAdapterInfo, &buflen)) {
-      PIP_ADAPTER_INFO pAdapter = pAdapterInfo;
-      while (pAdapter) {
-        Client iface;
-        iface.name = std::string(pAdapter->Description);
-        iface.ip_addr = parseIPV4string(pAdapter->IpAddressList.IpAddress.String);
-        iface.net_mask = parseIPV4string(pAdapter->IpAddressList.IpMask.String);
-        if ((0 != iface.ip_addr) && (INADDR_LOOPBACK != iface.ip_addr)) {
-          ifaces.push_back(iface);
-        }
-        pAdapter = pAdapter->Next;
-      }
-    } else {
-      throw std::runtime_error("Failed to obtain network interfaces");
-    }
-
-    if (nullptr != pAdapterInfo) {
-      free(pAdapterInfo);
     }
   }
 #endif

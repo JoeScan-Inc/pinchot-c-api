@@ -2131,7 +2131,8 @@ int32_t jsScanHeadGetRawProfiles(jsScanHead scan_head, jsRawProfile *profiles,
       }
       profiles[n++] = *p;
       // this should never fail
-      assert(0 == queue->EnqueueFree(&p));
+      r = queue->EnqueueFree(&p);
+      assert(0 == r);
     }
 
     r = int32_t(n);

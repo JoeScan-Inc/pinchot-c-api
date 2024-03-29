@@ -39,7 +39,9 @@ class PhaseTable {
   PhaseTable();
 
   PhaseTableCalculated CalculatePhaseTable();
-  uint32_t GetNumberOfPhases();
+  uint32_t GetNumberOfPhases() const;
+  std::map<ScanHead*, std::vector<std::pair<jsCamera, jsLaser>>>
+    GetScheduledPairsPerScanHead() const;
   void Reset();
   void CreatePhase();
   int AddToLastPhaseEntry(ScanHead *scan_head, jsCamera camera,

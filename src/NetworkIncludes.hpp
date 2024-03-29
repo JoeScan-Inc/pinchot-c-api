@@ -12,7 +12,18 @@
   (std::string(__FILE__) + ":" + std::to_string(__LINE__) + " " + \
    strerror(errno));
 
-#ifdef __linux__
+#ifdef _WIN32
+
+// TODO: inet_addr is deprecated in Windows
+// suggested to use either inet_pton or InetPton
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+
+#else
 
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -34,16 +45,6 @@
 #define SOCKET_ERROR -1
 #endif
 
-#else
-
-// TODO: inet_addr is deprecated in Windows
-// suggested to use either inet_pton or InetPton
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
-#pragma comment(lib, "iphlpapi.lib")
-#pragma comment(lib, "ws2_32.lib")
 #endif
 
 #endif

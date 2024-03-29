@@ -10,12 +10,23 @@
  * @brief Example showing how to configure and connect to a single JS-50 WX
  * scan head.
  *
- * This example application demonstrates how to configure, connect, and
- * disconnect from a single scan head. For configuring the scan head, functions
- * and data structures from the joescanapi will be introduced and utilized in
- * a friendly manner. Following successful configuration, the application will
- * connect to the scan head, print out its current status, and then finally
- * disconnect.
+ * This example application provides a basic example of setting up a scan for
+ * scanning using functions and data structures from the Pinchot API. In the
+ * following order, the application will:
+ *
+ *    1. Create scan system and scan head
+ *    2. Print out the scan head's capabilities
+ *    3. Set the configuration for the scan head
+ *    4. Build a basic phase table
+ *    5. Connect to the scan head
+ *    6. Print out the scan head's current status
+ *    7. Disconnect from the scan head.
+ *
+ * Further information regarding  features demonstrated in this application can
+ * be found online:
+ *
+ *    http://api.joescan.com/doc/v16/articles/js50-configuration.html
+ *    http://api.joescan.com/doc/v16/articles/phase-table.html
  */
 
 #include <iostream>
@@ -29,7 +40,7 @@ class ApiError : public std::runtime_error {
  public:
   ApiError(const char* what, int32_t return_code) : std::runtime_error(what)
   {
-    if ((0 < return_code) || (JS_ERROR_UNKNOWN > m_return_code)) {
+    if ((0 < return_code) || (JS_ERROR_UNKNOWN > return_code)) {
       m_return_code = JS_ERROR_UNKNOWN;
     } else {
       m_return_code = (jsError) return_code;
@@ -159,8 +170,6 @@ void PrintScanHeadStatus(jsScanHeadStatus &stat)
   std::cout << "\tcamera_b_pixels_in_window="
             << stat.camera_b_pixels_in_window << std::endl;
   std::cout << "\tcamera_b_temp=" << stat.camera_b_temp << std::endl;
-
-  std::cout << "\tnum_profiles_sent=" << stat.num_profiles_sent << std::endl;
 }
 
 int main(int argc, char *argv[])
@@ -255,6 +264,139 @@ int main(int argc, char *argv[])
       throw ApiError("failed to set alignment", r);
     }
 
+    // For this example we will create a basic phase table that utilizes all of
+    // the phasable elements of the scan head. Depending on the type of scan
+    // head, we will need to either schedule its cameras or its lasers. The
+    // bellow `switch` statement shows this process for each type of scan head.
+    jsScanHeadType type = jsScanHeadGetType(scan_head);
+    switch (type) {
+    case (JS_SCAN_HEAD_JS50X6B20):
+    case (JS_SCAN_HEAD_JS50X6B30):
+      // Phase | Laser | Camera
+      //   1   |   1   |   B
+      //   2   |   4   |   A
+      //   3   |   2   |   B
+      //   4   |   5   |   A
+      //   5   |   3   |   B
+      //   6   |   6   |   A
+
+      for (int n = 0; n < 3; n++) {
+        jsLaser laser = JS_LASER_INVALID;
+
+        // Lasers associated with Camera B
+        r = jsScanSystemPhaseCreate(scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        laser = (jsLaser) (JS_LASER_1 + n);
+        r = jsScanSystemPhaseInsertLaser(scan_system, scan_head, laser);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        // Lasers associated with Camera A
+        r = jsScanSystemPhaseCreate(scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        laser = (jsLaser) (JS_LASER_4 + n);
+        r = jsScanSystemPhaseInsertLaser(scan_system, scan_head, laser);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+      }
+      break;
+
+    case (JS_SCAN_HEAD_JS50Z820):
+    case (JS_SCAN_HEAD_JS50Z830):
+      // Phase | Laser | Camera
+      //   1   |   1   |   B
+      //   2   |   5   |   A
+      //   3   |   2   |   B
+      //   4   |   6   |   A
+      //   5   |   3   |   B
+      //   6   |   7   |   A
+      //   7   |   4   |   B
+      //   8   |   8   |   A
+
+      for (int n = 0; n < 4; n++) {
+        jsLaser laser = JS_LASER_INVALID;
+
+        // Lasers associated with Camera B
+        r = jsScanSystemPhaseCreate(scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        laser = (jsLaser) (JS_LASER_1 + n);
+        r = jsScanSystemPhaseInsertLaser(scan_system, scan_head, laser);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+
+        // Lasers associated with Camera A
+        r = jsScanSystemPhaseCreate(scan_system);
+        if (0 != r) {
+          throw ApiError("failed to create phase", r);
+        }
+
+        laser = (jsLaser) (JS_LASER_5 + n);
+        r = jsScanSystemPhaseInsertLaser(scan_system, scan_head, laser);
+        if (0 != r) {
+          throw ApiError("failed to insert into phase", r);
+        }
+      }
+      break;
+
+    case (JS_SCAN_HEAD_JS50WSC):
+    case (JS_SCAN_HEAD_JS50MX):
+      // Phase | Laser | Camera
+      //   1   |   1   |   A
+
+      r = jsScanSystemPhaseCreate(scan_system);
+      if (0 != r) {
+        throw ApiError("failed to create phase", r);
+      }
+
+      r = jsScanSystemPhaseInsertCamera(scan_system, scan_head, JS_CAMERA_A);
+      if (0 != r) {
+        throw ApiError("failed to insert into phase", r);
+      }
+      break;
+
+    case (JS_SCAN_HEAD_JS50WX):
+      // Phase | Laser | Camera
+      //   1   |   1   |   A
+      //   2   |   1   |   B
+
+      r = jsScanSystemPhaseCreate(scan_system);
+      if (0 != r) {
+        throw ApiError("failed to create phase", r);
+      }
+
+      r = jsScanSystemPhaseInsertCamera(scan_system, scan_head, JS_CAMERA_A);
+      if (0 != r) {
+        throw ApiError("failed to insert into phase", r);
+      }
+
+      r = jsScanSystemPhaseCreate(scan_system);
+      if (0 != r) {
+        throw ApiError("failed to create phase", r);
+      }
+
+      r = jsScanSystemPhaseInsertCamera(scan_system, scan_head, JS_CAMERA_B);
+      if (0 != r) {
+        throw ApiError("failed to insert into phase", r);
+      }
+      break;
+
+    case (JS_SCAN_HEAD_INVALID_TYPE):
+    default:
+      throw ApiError("invalid scan head type", 0);
+    }
+
     // We've now successfully configured the scan head. Now comes the time to
     // connect to the physical scanner and transmit the configuration values
     // we previously set up.
@@ -274,6 +416,18 @@ int main(int argc, char *argv[])
     }
 
     PrintScanHeadStatus(status);
+
+    // The minimum scan period indicates the fastest that the scan system can
+    // obtain profiles. This value is dependent upon the laser on time, the
+    // size of the scan window, and the phase table. For this example with only
+    // one scan head, only its configuration affects the minimum scan period.
+    // With more scan heads in the scan system, they will collectively affect
+    // this value.
+    int32_t min_period_us = jsScanSystemGetMinScanPeriod(scan_system);
+    if (0 >= min_period_us) {
+      throw ApiError("failed to read min scan period", min_period_us);
+    }
+    std::cout << "min scan period is " << min_period_us << " us" << std::endl;
 
     // Once connected, this is the point where we could command the scan system
     // to start scanning; obtaining profile data from the scan heads associated

@@ -1,5 +1,5 @@
-cmake_minimum_required (VERSION 3.1)
-project (benchmark_test)
+cmake_minimum_required(VERSION 3.8)
+project(benchmark_test)
 
 file(GLOB PROJECT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_executable(${CMAKE_PROJECT_NAME} ${PROJECT_SOURCES})

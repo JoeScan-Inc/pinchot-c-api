@@ -131,6 +131,7 @@ static int32_t BroadcastDiscover(
         result->client_ip_addr = iface.ip_addr;
         result->client_netmask = iface.net_mask;
         result->link_speed_mbps = msg->link_speed_mbps;
+        result->state = (jsScanHeadState) msg->state;
 
         size_t len = 0;
 

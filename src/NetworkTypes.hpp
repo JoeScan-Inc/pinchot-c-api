@@ -14,10 +14,10 @@
 
 #include "DatagramHeader.hpp"
 
-#ifdef __linux__
-#include <arpa/inet.h>
-#else
+#ifdef _WIN32
 #include <WinSock2.h>
+#else
+#include <arpa/inet.h>
 #endif
 
 namespace joescan {

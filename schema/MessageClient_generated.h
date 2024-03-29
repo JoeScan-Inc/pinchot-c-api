@@ -6,8 +6,8 @@
 
 #include "flatbuffers/flatbuffers.h"
 
-#include "StoreInfoData_generated.h"
 #include "MessageClientEnums_generated.h"
+#include "StoreInfoData_generated.h"
 
 namespace joescan {
 namespace schema {
@@ -57,6 +57,10 @@ struct ScanStartData;
 struct ScanStartDataBuilder;
 struct ScanStartDataT;
 
+struct ScanSyncConfigurationData;
+struct ScanSyncConfigurationDataBuilder;
+struct ScanSyncConfigurationDataT;
+
 struct MessageClient;
 struct MessageClientBuilder;
 struct MessageClientT;
@@ -77,11 +81,12 @@ enum MessageType : uint16_t {
   MessageType_EXCLUSION_MASK = 12,
   MessageType_BRIGHTNESS_CORRECTION = 13,
   MessageType_STORE_INFO = 14,
+  MessageType_SCANSYNC_CONFIGURATION = 15,
   MessageType_MIN = MessageType_NONE,
-  MessageType_MAX = MessageType_STORE_INFO
+  MessageType_MAX = MessageType_SCANSYNC_CONFIGURATION
 };
 
-inline const MessageType (&EnumValuesMessageType())[15] {
+inline const MessageType (&EnumValuesMessageType())[16] {
   static const MessageType values[] = {
     MessageType_NONE,
     MessageType_CONNECT,
@@ -97,13 +102,14 @@ inline const MessageType (&EnumValuesMessageType())[15] {
     MessageType_PROFILE_REQUEST,
     MessageType_EXCLUSION_MASK,
     MessageType_BRIGHTNESS_CORRECTION,
-    MessageType_STORE_INFO
+    MessageType_STORE_INFO,
+    MessageType_SCANSYNC_CONFIGURATION
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageType() {
-  static const char * const names[16] = {
+  static const char * const names[17] = {
     "NONE",
     "CONNECT",
     "DISCONNECT",
@@ -119,13 +125,14 @@ inline const char * const *EnumNamesMessageType() {
     "EXCLUSION_MASK",
     "BRIGHTNESS_CORRECTION",
     "STORE_INFO",
+    "SCANSYNC_CONFIGURATION",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageType(MessageType e) {
-  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_STORE_INFO)) return "";
+  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_SCANSYNC_CONFIGURATION)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageType()[index];
 }
@@ -142,11 +149,12 @@ enum MessageData : uint8_t {
   MessageData_BrightnessCorrectionData = 8,
   MessageData_ScanStartData = 9,
   MessageData_StoreInfoData = 10,
+  MessageData_ScanSyncConfigurationData = 11,
   MessageData_MIN = MessageData_NONE,
-  MessageData_MAX = MessageData_StoreInfoData
+  MessageData_MAX = MessageData_ScanSyncConfigurationData
 };
 
-inline const MessageData (&EnumValuesMessageData())[11] {
+inline const MessageData (&EnumValuesMessageData())[12] {
   static const MessageData values[] = {
     MessageData_NONE,
     MessageData_ConnectData,
@@ -158,13 +166,14 @@ inline const MessageData (&EnumValuesMessageData())[11] {
     MessageData_ExclusionMaskData,
     MessageData_BrightnessCorrectionData,
     MessageData_ScanStartData,
-    MessageData_StoreInfoData
+    MessageData_StoreInfoData,
+    MessageData_ScanSyncConfigurationData
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageData() {
-  static const char * const names[12] = {
+  static const char * const names[13] = {
     "NONE",
     "ConnectData",
     "ScanConfigurationData",
@@ -176,13 +185,14 @@ inline const char * const *EnumNamesMessageData() {
     "BrightnessCorrectionData",
     "ScanStartData",
     "StoreInfoData",
+    "ScanSyncConfigurationData",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageData(MessageData e) {
-  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_StoreInfoData)) return "";
+  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_ScanSyncConfigurationData)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageData()[index];
 }
@@ -229,6 +239,10 @@ template<> struct MessageDataTraits<joescan::schema::client::ScanStartData> {
 
 template<> struct MessageDataTraits<joescan::schema::client::StoreInfoData> {
   static const MessageData enum_value = MessageData_StoreInfoData;
+};
+
+template<> struct MessageDataTraits<joescan::schema::client::ScanSyncConfigurationData> {
+  static const MessageData enum_value = MessageData_ScanSyncConfigurationData;
 };
 
 struct MessageDataUnion {
@@ -342,6 +356,14 @@ struct MessageDataUnion {
   const joescan::schema::client::StoreInfoDataT *AsStoreInfoData() const {
     return type == MessageData_StoreInfoData ?
       reinterpret_cast<const joescan::schema::client::StoreInfoDataT *>(value) : nullptr;
+  }
+  joescan::schema::client::ScanSyncConfigurationDataT *AsScanSyncConfigurationData() {
+    return type == MessageData_ScanSyncConfigurationData ?
+      reinterpret_cast<joescan::schema::client::ScanSyncConfigurationDataT *>(value) : nullptr;
+  }
+  const joescan::schema::client::ScanSyncConfigurationDataT *AsScanSyncConfigurationData() const {
+    return type == MessageData_ScanSyncConfigurationData ?
+      reinterpret_cast<const joescan::schema::client::ScanSyncConfigurationDataT *>(value) : nullptr;
   }
 };
 
@@ -1423,6 +1445,80 @@ inline flatbuffers::Offset<ScanStartData> CreateScanStartData(
 
 flatbuffers::Offset<ScanStartData> CreateScanStartData(flatbuffers::FlatBufferBuilder &_fbb, const ScanStartDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct ScanSyncConfigurationDataT : public flatbuffers::NativeTable {
+  typedef ScanSyncConfigurationData TableType;
+  uint32_t serial_main = 0;
+  uint32_t serial_aux1 = 0;
+  uint32_t serial_aux2 = 0;
+};
+
+struct ScanSyncConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef ScanSyncConfigurationDataT NativeTableType;
+  typedef ScanSyncConfigurationDataBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_SERIAL_MAIN = 4,
+    VT_SERIAL_AUX1 = 6,
+    VT_SERIAL_AUX2 = 8
+  };
+  uint32_t serial_main() const {
+    return GetField<uint32_t>(VT_SERIAL_MAIN, 0);
+  }
+  uint32_t serial_aux1() const {
+    return GetField<uint32_t>(VT_SERIAL_AUX1, 0);
+  }
+  uint32_t serial_aux2() const {
+    return GetField<uint32_t>(VT_SERIAL_AUX2, 0);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_SERIAL_MAIN) &&
+           VerifyField<uint32_t>(verifier, VT_SERIAL_AUX1) &&
+           VerifyField<uint32_t>(verifier, VT_SERIAL_AUX2) &&
+           verifier.EndTable();
+  }
+  ScanSyncConfigurationDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ScanSyncConfigurationDataT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<ScanSyncConfigurationData> Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncConfigurationDataT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ScanSyncConfigurationDataBuilder {
+  typedef ScanSyncConfigurationData Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_serial_main(uint32_t serial_main) {
+    fbb_.AddElement<uint32_t>(ScanSyncConfigurationData::VT_SERIAL_MAIN, serial_main, 0);
+  }
+  void add_serial_aux1(uint32_t serial_aux1) {
+    fbb_.AddElement<uint32_t>(ScanSyncConfigurationData::VT_SERIAL_AUX1, serial_aux1, 0);
+  }
+  void add_serial_aux2(uint32_t serial_aux2) {
+    fbb_.AddElement<uint32_t>(ScanSyncConfigurationData::VT_SERIAL_AUX2, serial_aux2, 0);
+  }
+  explicit ScanSyncConfigurationDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<ScanSyncConfigurationData> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<ScanSyncConfigurationData>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<ScanSyncConfigurationData> CreateScanSyncConfigurationData(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t serial_main = 0,
+    uint32_t serial_aux1 = 0,
+    uint32_t serial_aux2 = 0) {
+  ScanSyncConfigurationDataBuilder builder_(_fbb);
+  builder_.add_serial_aux2(serial_aux2);
+  builder_.add_serial_aux1(serial_aux1);
+  builder_.add_serial_main(serial_main);
+  return builder_.Finish();
+}
+
+flatbuffers::Offset<ScanSyncConfigurationData> CreateScanSyncConfigurationData(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncConfigurationDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct MessageClientT : public flatbuffers::NativeTable {
   typedef MessageClient TableType;
   joescan::schema::client::MessageType type = joescan::schema::client::MessageType_NONE;
@@ -1477,6 +1573,9 @@ struct MessageClient FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const joescan::schema::client::StoreInfoData *data_as_StoreInfoData() const {
     return data_type() == joescan::schema::client::MessageData_StoreInfoData ? static_cast<const joescan::schema::client::StoreInfoData *>(data()) : nullptr;
   }
+  const joescan::schema::client::ScanSyncConfigurationData *data_as_ScanSyncConfigurationData() const {
+    return data_type() == joescan::schema::client::MessageData_ScanSyncConfigurationData ? static_cast<const joescan::schema::client::ScanSyncConfigurationData *>(data()) : nullptr;
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint16_t>(verifier, VT_TYPE) &&
@@ -1528,6 +1627,10 @@ template<> inline const joescan::schema::client::ScanStartData *MessageClient::d
 
 template<> inline const joescan::schema::client::StoreInfoData *MessageClient::data_as<joescan::schema::client::StoreInfoData>() const {
   return data_as_StoreInfoData();
+}
+
+template<> inline const joescan::schema::client::ScanSyncConfigurationData *MessageClient::data_as<joescan::schema::client::ScanSyncConfigurationData>() const {
+  return data_as_ScanSyncConfigurationData();
 }
 
 struct MessageClientBuilder {
@@ -1968,6 +2071,38 @@ inline flatbuffers::Offset<ScanStartData> CreateScanStartData(flatbuffers::FlatB
       _start_time_ns);
 }
 
+inline ScanSyncConfigurationDataT *ScanSyncConfigurationData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ScanSyncConfigurationDataT>(new ScanSyncConfigurationDataT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ScanSyncConfigurationData::UnPackTo(ScanSyncConfigurationDataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = serial_main(); _o->serial_main = _e; }
+  { auto _e = serial_aux1(); _o->serial_aux1 = _e; }
+  { auto _e = serial_aux2(); _o->serial_aux2 = _e; }
+}
+
+inline flatbuffers::Offset<ScanSyncConfigurationData> ScanSyncConfigurationData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncConfigurationDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateScanSyncConfigurationData(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<ScanSyncConfigurationData> CreateScanSyncConfigurationData(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncConfigurationDataT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const ScanSyncConfigurationDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _serial_main = _o->serial_main;
+  auto _serial_aux1 = _o->serial_aux1;
+  auto _serial_aux2 = _o->serial_aux2;
+  return joescan::schema::client::CreateScanSyncConfigurationData(
+      _fbb,
+      _serial_main,
+      _serial_aux1,
+      _serial_aux2);
+}
+
 inline MessageClientT *MessageClient::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<MessageClientT>(new MessageClientT());
   UnPackTo(_o.get(), _resolver);
@@ -2045,6 +2180,10 @@ inline bool VerifyMessageData(flatbuffers::Verifier &verifier, const void *obj, 
       auto ptr = reinterpret_cast<const joescan::schema::client::StoreInfoData *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case MessageData_ScanSyncConfigurationData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ScanSyncConfigurationData *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -2103,6 +2242,10 @@ inline void *MessageDataUnion::UnPack(const void *obj, MessageData type, const f
       auto ptr = reinterpret_cast<const joescan::schema::client::StoreInfoData *>(obj);
       return ptr->UnPack(resolver);
     }
+    case MessageData_ScanSyncConfigurationData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ScanSyncConfigurationData *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -2149,6 +2292,10 @@ inline flatbuffers::Offset<void> MessageDataUnion::Pack(flatbuffers::FlatBufferB
       auto ptr = reinterpret_cast<const joescan::schema::client::StoreInfoDataT *>(value);
       return CreateStoreInfoData(_fbb, ptr, _rehasher).Union();
     }
+    case MessageData_ScanSyncConfigurationData: {
+      auto ptr = reinterpret_cast<const joescan::schema::client::ScanSyncConfigurationDataT *>(value);
+      return CreateScanSyncConfigurationData(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -2193,6 +2340,10 @@ inline MessageDataUnion::MessageDataUnion(const MessageDataUnion &u) : type(u.ty
     }
     case MessageData_StoreInfoData: {
       value = new joescan::schema::client::StoreInfoDataT(*reinterpret_cast<joescan::schema::client::StoreInfoDataT *>(u.value));
+      break;
+    }
+    case MessageData_ScanSyncConfigurationData: {
+      value = new joescan::schema::client::ScanSyncConfigurationDataT(*reinterpret_cast<joescan::schema::client::ScanSyncConfigurationDataT *>(u.value));
       break;
     }
     default:
@@ -2249,6 +2400,11 @@ inline void MessageDataUnion::Reset() {
     }
     case MessageData_StoreInfoData: {
       auto ptr = reinterpret_cast<joescan::schema::client::StoreInfoDataT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessageData_ScanSyncConfigurationData: {
+      auto ptr = reinterpret_cast<joescan::schema::client::ScanSyncConfigurationDataT *>(value);
       delete ptr;
       break;
     }

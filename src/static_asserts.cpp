@@ -13,32 +13,48 @@ using namespace joescan;
 // compile time checks to ensure functionality is maintained
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50WX ==
-                JS_SCAN_HEAD_JS50WX,
+               JS_SCAN_HEAD_JS50WX,
               "JS50WX");
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50WSC ==
-                JS_SCAN_HEAD_JS50WSC,
-              "JS50WSC");
+               JS_SCAN_HEAD_JS50WSC,
+               "JS50WSC");
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50X6B20 ==
-                JS_SCAN_HEAD_JS50X6B20,
-              "JS50X6B20");
+               JS_SCAN_HEAD_JS50X6B20,
+               "JS50X6B20");
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50X6B30 ==
-                JS_SCAN_HEAD_JS50X6B30,
-              "JS50X6B30");
+               JS_SCAN_HEAD_JS50X6B30,
+               "JS50X6B30");
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50MX ==
-                JS_SCAN_HEAD_JS50MX,
-              "JS50MX");
+               JS_SCAN_HEAD_JS50MX,
+               "JS50MX");
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50Z820 ==
-                JS_SCAN_HEAD_JS50Z820,
-              "JS50XZ820");
+               JS_SCAN_HEAD_JS50Z820,
+               "JS50XZ820");
 
 static_assert((jsScanHeadType)schema::ScanHeadType_JS50Z830 ==
-                JS_SCAN_HEAD_JS50Z830,
-              "JS50XZ830");
+               JS_SCAN_HEAD_JS50Z830,
+               "JS50XZ830");
+
+static_assert((jsScanHeadState)schema::server::ScanHeadState_INVALID ==
+               JS_SCAN_HEAD_STATE_INVALID,
+               "JS_SCAN_HEAD_STATE_INVALID");
+
+static_assert((jsScanHeadState)schema::server::ScanHeadState_IDLE ==
+               JS_SCAN_HEAD_STATE_IDLE,
+               "JS_SCAN_HEAD_STATE_IDLE");
+
+static_assert((jsScanHeadState)schema::server::ScanHeadState_CONNECTED ==
+               JS_SCAN_HEAD_STATE_CONNECTED,
+               "JS_SCAN_HEAD_STATE_CONNECTED");
+
+static_assert((jsScanHeadState)schema::server::ScanHeadState_SCANNING ==
+               JS_SCAN_HEAD_STATE_SCANNING,
+               "JS_SCAN_HEAD_STATE_SCANNING");
 
 static_assert(true == std::is_trivially_copyable<jsRawProfile>::value,
               "jsRawProfile not trivially copyable");

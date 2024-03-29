@@ -24,7 +24,7 @@ class ApiError : public std::runtime_error {
  public:
   ApiError(const char* what, int32_t return_code) : std::runtime_error(what)
   {
-    if ((0 < return_code) || (JS_ERROR_UNKNOWN > m_return_code)) {
+    if ((0 < return_code) || (JS_ERROR_UNKNOWN > return_code)) {
       m_return_code = JS_ERROR_UNKNOWN;
     } else {
       m_return_code = (jsError) return_code;
@@ -83,6 +83,21 @@ void PrintScanHeadDiscovered(jsDiscovered &d)
   std::cout << "  Client IP Address " << NetToString(d.client_ip_addr) << "\n";
   std::cout << "  Client Netmask " << NetToString(d.client_netmask) << "\n";
   std::cout << "  Link Speed " << d.link_speed_mbps << "Mbps" << std::endl;
+  switch (d.state) {
+  case (JS_SCAN_HEAD_STATE_IDLE):
+    std::cout << "  State: IDLE" << std::endl;
+    break;
+  case (JS_SCAN_HEAD_STATE_CONNECTED):
+    std::cout << "  State: CONNECTED" << std::endl;
+    break;
+  case (JS_SCAN_HEAD_STATE_SCANNING):
+    std::cout << "  State: SCANNING" << std::endl;
+    break;
+  case (JS_SCAN_HEAD_STATE_INVALID):
+  default:
+    std::cout << "  State: INVALID" << std::endl;
+    break;
+  }
 }
 
 int main(int argc, char *argv[])

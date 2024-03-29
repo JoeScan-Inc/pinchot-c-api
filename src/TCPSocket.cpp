@@ -33,7 +33,7 @@ TCPSocket::TCPSocket(std::string client_name, uint32_t client_ip, uint32_t ip,
     throw std::runtime_error(e);
   }
 
-#ifdef __linux__
+#ifndef _WIN32
   if (!client_name.empty()) {
     // For Linux, the IP address is owned by the host, rather that the
     // interface, so routing still can get confused. By binding to the
@@ -53,17 +53,17 @@ TCPSocket::TCPSocket(std::string client_name, uint32_t client_ip, uint32_t ip,
   m_iface.ip_addr = 0;
   m_iface.port = 0;
 
-#ifdef __linux__
-  int flags = fcntl(sockfd, F_GETFL, 0);
-  r = fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+#ifdef _WIN32
+  unsigned long mode = 1;
+  r = ioctlsocket(sockfd, FIONBIO, &mode);
   if (0 != r) {
     NetworkInterface::Close();
     std::string e = NETWORK_TRACE;
     throw std::runtime_error(e);
   }
 #else
-  unsigned long mode = 1;
-  r = ioctlsocket(sockfd, FIONBIO, &mode);
+  int flags = fcntl(sockfd, F_GETFL, 0);
+  r = fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
   if (0 != r) {
     NetworkInterface::Close();
     std::string e = NETWORK_TRACE;
@@ -72,11 +72,11 @@ TCPSocket::TCPSocket(std::string client_name, uint32_t client_ip, uint32_t ip,
 #endif
 
   int one = 1;
-#ifdef __linux__
-  r = setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(one));
-#else
+#ifdef _WIN32
   r = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY,
                  reinterpret_cast<char*>(&one), sizeof(one));
+#else
+  r = setsockopt(sockfd, SOL_TCP, TCP_NODELAY, &one, sizeof(one));
 #endif
   if (0 != r) {
     NetworkInterface::Close();
@@ -93,14 +93,14 @@ TCPSocket::TCPSocket(std::string client_name, uint32_t client_ip, uint32_t ip,
   if (0 != r) {
     int err = 0;
     int check = 0;
-#ifdef __linux__
-    check = EINPROGRESS;
-    err = errno;
-#else
+#ifdef _WIN32
     // connect function (winsock2.h): The socket is marked as nonblocking and
     // the connection cannot be completed immediately.
     check = WSAEWOULDBLOCK;
     err = WSAGetLastError();
+#else
+    check = EINPROGRESS;
+    err = errno;
 #endif
     if (err != check) {
       NetworkInterface::Close();
@@ -167,14 +167,14 @@ int TCPSocket::Send(uint8_t *buf, uint32_t len)
     if (0 > r) {
       int err = 0;
       int check = 0;
-#ifdef __linux__
-      check = EINPROGRESS;
-      err = errno;
-#else
+#ifdef _WIN32
       // connect function (winsock2.h): The socket is marked as nonblocking and
       // the connection cannot be completed immediately.
       check = WSAEWOULDBLOCK;
       err = WSAGetLastError();
+#else
+      check = EINPROGRESS;
+      err = errno;
 #endif
       if (err != check) {
         NetworkInterface::Close();
@@ -197,14 +197,14 @@ int TCPSocket::Send(uint8_t *buf, uint32_t len)
     if (0 > r) {
       int err = 0;
       int check = 0;
-#ifdef __linux__
-      check = EINPROGRESS;
-      err = errno;
-#else
+#ifdef _WIN32
       // connect function (winsock2.h): The socket is marked as nonblocking and
       // the connection cannot be completed immediately.
       check = WSAEWOULDBLOCK;
       err = WSAGetLastError();
+#else
+      check = EINPROGRESS;
+      err = errno;
 #endif
       if (err != check) {
         NetworkInterface::Close();

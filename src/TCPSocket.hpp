@@ -65,13 +65,13 @@ inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_ac
         return 0;
       }
 
-#ifdef __linux__
-      if ((errno == EAGAIN) || (errno == EINTR) || (errno == 0)) {
+#ifdef _WIN32
+      int err = WSAGetLastError();
+      if ((err == WSAEWOULDBLOCK) || (err == WSAEINTR)) {
         continue;
       }
 #else
-      int err = WSAGetLastError();
-      if ((err == WSAEWOULDBLOCK) || (err == WSAEINTR)) {
+      if ((errno == EAGAIN) || (errno == EINTR) || (errno == 0)) {
         continue;
       }
 #endif
@@ -108,13 +108,13 @@ inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_ac
       // needs to be closed.
         return n;
       }
-#ifdef __linux__
-      if ((errno == EAGAIN) || (errno == EINTR) || (errno == 0)) {
+#ifdef _WIN32
+      int err = WSAGetLastError();
+      if ((err == WSAEWOULDBLOCK) || (err == WSAEINTR)) {
         continue;
       }
 #else
-      int err = WSAGetLastError();
-      if ((err == WSAEWOULDBLOCK) || (err == WSAEINTR)) {
+      if ((errno == EAGAIN) || (errno == EINTR) || (errno == 0)) {
         continue;
       }
 #endif
@@ -157,12 +157,12 @@ inline int TCPSocket::SelectWaitRead()
     // no activity on file descriptor
     int check = 0;
     int err = 0;
-#ifdef __linux__
-    check = EINTR;
-    err = errno;
-#else
+#ifdef _WIN32
     check = WSAEINTR;
     err = WSAGetLastError();
+#else
+    check = EINTR;
+    err = errno;
 #endif
     if (err != check) {
       // timeout or error we don't handle
@@ -200,12 +200,12 @@ inline int TCPSocket::SelectWaitWrite()
     // no activity on file descriptor
     int check = 0;
     int err = 0;
-#ifdef __linux__
-    check = EINTR;
-    err = errno;
-#else
+#ifdef _WIN32
     check = WSAEINTR;
     err = WSAGetLastError();
+#else
+    check = EINTR;
+    err = errno;
 #endif
     if (err != check) {
       // timeout or error we don't handle

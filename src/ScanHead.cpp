@@ -479,6 +479,11 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
   }
   uint32_t laser_port = (uint32_t) tmp;
 
+  // NOTE: Generating an image invalidates window data on the scan head; we
+  // will need to resend this data to the scan head before scanning if it has
+  // already been sent.
+  m_data->SetDirty();
+
   {
     using namespace schema::client;
     ImageRequestDataT data;
@@ -1451,7 +1456,7 @@ int ScanHead::ProcessProfile(DataPacket *packet, jsRawProfile *raw)
 
 void ScanHead::ThreadScanningReceive()
 {
-#ifndef __linux__
+#ifdef _WIN32
   // Bump up thread priority; receiving profiles is the most important thing
   // for end users.
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);

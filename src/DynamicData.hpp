@@ -51,6 +51,7 @@ struct DynamicData {
 
   bool IsDirty();
   void ClearDirty();
+  void SetDirty();
 
  private:
   jsScanHeadConfiguration m_config_default;

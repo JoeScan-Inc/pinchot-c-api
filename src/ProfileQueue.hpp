@@ -52,7 +52,8 @@ class ProfileQueue {
   // static memory allocated for buffering profiles per scan head
   ScanHeadModel &m_model;
   std::vector<jsRawProfile> m_profiles;
-  std::map<std::pair<jsCamera,jsLaser>, Queue> m_element_queue;
+  std::map<std::pair<jsCamera, jsLaser>, Queue> m_element_queue;
+  std::vector<std::pair<jsCamera, jsLaser>> m_valid_pairs;
   Queue m_single_queue;
   bool m_is_single_queue;
 
@@ -131,11 +132,13 @@ class ProfileQueue {
     // data out from the API.
 
     while (true == m_single_queue.ready.try_pop());
+    while (true == m_single_queue.free.try_pop());
 
     auto iter = CameraLaserIterator(m_model);
     for (auto &pair : iter) {
       Queue *queue = &(m_element_queue.at(pair));
       while (true == queue->ready.try_pop());
+      while (true == queue->free.try_pop());
     }
 
     if (MODE_SINGLE == mode) {
@@ -231,6 +234,11 @@ class ProfileQueue {
     return ReadyPeekSequenceInternal(m_element_queue.at(pair).ready, seq);
   }
 
+  void SetValidPairs(const std::vector<std::pair<jsCamera, jsLaser>> &pairs)
+  {
+    m_valid_pairs = pairs;
+  }
+
   Report GetReport() {
     Report report;
 
@@ -249,8 +257,7 @@ class ProfileQueue {
       int64_t sz_min = -1;
       int64_t sz_max = -1;
 
-      auto iter = CameraLaserIterator(m_model);
-      for (auto &pair : iter) {
+      for (auto &pair : m_valid_pairs) {
         Queue *queue = &(m_element_queue.at(pair));
         uint32_t seq = queue->last_sequence;
 

@@ -291,6 +291,15 @@ typedef enum {
 
 #pragma pack(push, 1)
 
+typedef enum {
+  JS_SCAN_HEAD_STATE_INVALID = 0,
+  JS_SCAN_HEAD_STATE_IDLE = 1,
+  JS_SCAN_HEAD_STATE_CONNECTED = 2,
+  JS_SCAN_HEAD_STATE_SCANNING = 3,
+
+  JS_SCAN_HEAD_STATE_FORCE_INT32_SIZE = INT32_MAX,
+} jsScanHeadState;
+
 /**
  * @brief Structure used to provide information as to scan heads discovered on
  * the network.
@@ -318,6 +327,8 @@ typedef struct {
   uint32_t client_netmask;
   /** @brief Link speed in megabits per second between client and scan head. */
   uint32_t link_speed_mbps;
+  /** @brief Current state of the scan head. */
+  jsScanHeadState state;
 } jsDiscovered;
 
 /**
@@ -347,35 +358,11 @@ typedef struct {
  * @brief Structure used to configure a scan head's operating parameters.
  */
 typedef struct {
-  /**
-   * @brief Sets the minimum microseconds time value for the camera
-   * autoexposure algorithm used when the scan head is in image mode. This
-   * value should be within the range of 15 to 2000000 microseconds.
-   *
-   * @note To disable autoexposure algorithm, set `camera_exposure_time_min_us`,
-   * `camera_exposure_time_max_us`, and `camera_exposure_time_def_us` to the
-   * same value.
-   */
+  /** @deprecated Will be removed in a future release. */
   uint32_t camera_exposure_time_min_us;
-  /**
-   * @brief Sets the maximum microseconds time value for the camera
-   * autoexposure algorithm used when the scan head is in image mode. This
-   * value should be within the range of 15 to 2000000 microseconds.
-   *
-   * @note To disable autoexposure algorithm, set `camera_exposure_time_min_us`,
-   * `camera_exposure_time_max_us`, and `camera_exposure_time_def_us` to the
-   * same value.
-   */
+  /** @deprecated Will be removed in a future release. */
   uint32_t camera_exposure_time_max_us;
-  /**
-   * @brief Sets the default microseconds time value for the camera
-   * autoexposure algorithm used when the scan head is in image mode. This
-   * value should be within the range of 15 to 2000000 microseconds.
-   *
-   * @note To disable autoexposure algorithm, set `camera_exposure_time_min_us`,
-   * `camera_exposure_time_max_us`, and `camera_exposure_time_def_us` to the
-   * same value.
-   */
+  /** @deprecated Will be removed in a future release. */
   uint32_t camera_exposure_time_def_us;
   /**
    * @brief Sets the minimum microseconds time value for the laser on
@@ -1157,7 +1144,8 @@ EXPORTED int32_t PRE jsScanSystemStartFrameScanning(
  * `jsScanSystemGetProfileFrame` and `jsScanSystemGetRawProfileFrame`.
  *
  * @param scan_system Reference to system of scan heads.
- * @return Number of elements in frame of scan data.
+ * @return The number of elements in frame of scan data, or negative value
+ * mapping to `jsError` on error.
  */
 EXPORTED int32_t PRE jsScanSystemGetProfilesPerFrame(
   jsScanSystem scan_system) POST;
@@ -1991,16 +1979,12 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticProfileLaser(
  * @note This function will automatically select the correct camera / laser
  * pair, as used when scanning, when performing the capture.
  *
- * @note Only `JS_DIAGNOSTIC_FIXED_EXPOSURE` is supported; in a future release,
- * `JS_DIAGNOSTIC_AUTO_EXPOSURE` will be supported.
+ * @deprecated Will be removed in a future release.
  *
  * @param scan_head Reference to scan head.
  * @param camera Camera to use for image capture. The laser to be in view of
  * the image will be chosen based on the chosen camera.
- * @param mode `JS_DIAGNOSTIC_FIXED_EXPOSURE` to use the laser on time and
- * camera exposure provided as function arguments, `JS_DIAGNOSTIC_AUTO_EXPOSURE`
- * to dynamically adjust camera & laser according to `jsScanHeadConfiguration`
- * provided to the `jsScanHeadSetConfiguration` function.
+ * @param mode Must be set to `JS_DIAGNOSTIC_FIXED_EXPOSURE`.
  * @param laser_on_time_us Time laser is on in microseconds.
  * @param camera_exposure_time_us Time camera exposes in microseconds.
  * @param image Pointer to memory to store camera image data.
@@ -2025,16 +2009,12 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageCamera(
  * @note This function will automatically select the correct camera / laser
  * pair, as used when scanning, when performing the capture.
  *
- * @note Only `JS_DIAGNOSTIC_FIXED_EXPOSURE` is supported; in a future release,
- * `JS_DIAGNOSTIC_AUTO_EXPOSURE` will be supported.
+ * @deprecated Will be removed in a future release.
  *
  * @param scan_head Reference to scan head.
  * @param laser Laser to be in view of image capture. The camera that takes the
  * image will automatically be chosen based on the chosen laser.
- * @param mode `JS_DIAGNOSTIC_FIXED_EXPOSURE` to use the laser on time and
- * camera exposure provided as function arguments, `JS_DIAGNOSTIC_AUTO_EXPOSURE`
- * to dynamically adjust camera & laser according to `jsScanHeadConfiguration`
- * provided to the `jsScanHeadSetConfiguration` function.
+ * @param mode Must be set to `JS_DIAGNOSTIC_FIXED_EXPOSURE`.
  * @param laser_on_time_us Time laser is on in microseconds.
  * @param camera_exposure_time_us Time camera exposes in microseconds.
  * @param image Pointer to memory to store camera image data.
@@ -2056,16 +2036,12 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageLaser(
  * not after the system has been set to scan by calling
  * `jsScanSystemStartScanning()`.
  *
- * @note Only `JS_DIAGNOSTIC_FIXED_EXPOSURE` is supported; in a future release,
- * `JS_DIAGNOSTIC_AUTO_EXPOSURE` will be supported.
+ * @deprecated Will be removed in a future release.
  *
  * @param scan_head Reference to scan head.
  * @param camera Camera to use for image capture.
  * @param laser Laser to be in view of image capture.
- * @param mode `JS_DIAGNOSTIC_FIXED_EXPOSURE` to use the laser on time and
- * camera exposure provided as function arguments, `JS_DIAGNOSTIC_AUTO_EXPOSURE`
- * to dynamically adjust camera & laser according to `jsScanHeadConfiguration`
- * provided to the `jsScanHeadSetConfiguration` function.
+ * @param mode Must be set to `JS_DIAGNOSTIC_FIXED_EXPOSURE`.
  * @param laser_on_time_us Time laser is on in microseconds.
  * @param camera_exposure_time_us Time camera exposes in microseconds.
  * @param image Pointer to memory to store camera image data.

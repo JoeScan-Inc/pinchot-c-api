@@ -74,9 +74,6 @@ class ScanApplication {
       throw ApiError("failed to create scan system", m_scan_system);
     }
 
-    m_config.camera_exposure_time_min_us = 10000;
-    m_config.camera_exposure_time_def_us = 47000;
-    m_config.camera_exposure_time_max_us = 900000;
     m_config.laser_on_time_min_us = 1000;
     m_config.laser_on_time_def_us = 1000;
     m_config.laser_on_time_max_us = 1000;

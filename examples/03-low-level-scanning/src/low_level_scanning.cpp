@@ -6,16 +6,23 @@
  */
 
 /**
- * @file advanced_scanning.cpp
- * @brief Example demonstrating how to read profile data from scan heads in a
- * performant manner suitable for real time applications.
+ * @file low_level_scanning.cpp
+ * @brief Example demonstrating how to read profile data from scan heads
+ * individually.
  *
- * This application shows how one can stream profile data from multiple scan
- * heads in a manner that allows for real time processing of the data. To
- * accomplish this, multiple threads are created to break up the work of
- * reading in new profile data and acting upon it. Configuration of the scan
- * heads will mostly be identical to previous examples although some values
- * may be changed to allow for faster streaming of data.
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ * NOTE: Frame Scanning is the recommended mode of scanning for most
+ * applications. The below example is provided for legacy purposes and
+ * for customers requiring low level access.
+ * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ *
+ * While Frame Scanning is recommended for most applications, users looking
+ * for greater manual control of their scan heads, or needing to distribute the
+ * CPU load across multiple cores, can make use of "Low Level Scanning". When
+ * scanning in this manner, the profiles are returned individually for each
+ * scan head and it is the responsibility of the developer to reassemble the
+ * profiles. It is recommened with Low Level Scanning mode to create a thread
+ * for each individual scan head in order to achieve the highest performance.
  */
 
 #include <chrono>
@@ -35,7 +42,7 @@ class ApiError : public std::runtime_error {
  public:
   ApiError(const char* what, int32_t return_code) : std::runtime_error(what)
   {
-    if ((0 < return_code) || (JS_ERROR_UNKNOWN > m_return_code)) {
+    if ((0 < return_code) || (JS_ERROR_UNKNOWN > return_code)) {
       m_return_code = JS_ERROR_UNKNOWN;
     } else {
       m_return_code = (jsError) return_code;

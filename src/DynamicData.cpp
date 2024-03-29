@@ -269,3 +269,8 @@ void DynamicData::ClearDirty()
 {
   m_is_dirty = false;
 }
+
+void DynamicData::SetDirty()
+{
+  m_is_dirty = true;
+}

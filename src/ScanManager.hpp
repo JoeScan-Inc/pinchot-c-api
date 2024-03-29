@@ -150,7 +150,7 @@ class ScanManager {
   int StartScanning(uint32_t period_us, jsDataFormat fmt,
                     bool is_frame_scanning=false);
 
-  uint32_t GetProfilesPerFrame();
+  uint32_t GetProfilesPerFrame() const;
   int32_t WaitUntilFrameAvailable(uint32_t timeout_us);
   int32_t GetFrame(jsProfile *profiles);
   int32_t GetFrame(jsRawProfile *profiles);

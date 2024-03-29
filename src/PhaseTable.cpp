@@ -10,6 +10,22 @@ PhaseTable::PhaseTable() : m_has_duplicate_elements(false), m_is_dirty(false)
   Reset();
 }
 
+// group all camera/laser pairs by scan head that appear in the phase table
+std::map<ScanHead*, std::vector<std::pair<jsCamera, jsLaser>>>
+PhaseTable::GetScheduledPairsPerScanHead() const
+{
+  std::map<ScanHead*, std::vector<std::pair<jsCamera, jsLaser>>> pairs;
+
+  for (auto &phase : m_table) {
+    for (auto &element : phase) {
+      auto pair = std::make_pair(element.camera, element.laser);
+      pairs[element.scan_head].push_back(pair);
+    }
+  }
+
+  return pairs;
+}
+
 PhaseTableCalculated PhaseTable::CalculatePhaseTable()
 {
   PhaseTableCalculated table_calculated;
@@ -155,7 +171,7 @@ PhaseTableCalculated PhaseTable::CalculatePhaseTable()
   return table_calculated;
 }
 
-uint32_t PhaseTable::GetNumberOfPhases()
+uint32_t PhaseTable::GetNumberOfPhases() const
 {
   return static_cast<uint32_t>(m_table.size());
 }
