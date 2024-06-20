@@ -7,6 +7,7 @@ set(PRECOMPILED_DIR ${PINCHOT_API_ROOT_DIR}/schema)
 if(EXISTS ${PRECOMPILED_DIR})
   include_directories(${PRECOMPILED_DIR})
   file(GLOB SCHEMA_BINARY_SOURCES ${PRECOMPILED_DIR}/*.c)
+  include_directories(${THIRD_PARTY_LIB_DIR}/flatbuffers-2.0.0)
 else()
   # source directory
   set(SCHEMA_DIR ${PINCHOT_API_ROOT_DIR}/../../schema)
