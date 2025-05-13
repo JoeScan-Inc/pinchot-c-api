@@ -21,6 +21,7 @@ else()
   set(SCHEMA_SOURCES
     ${SCHEMA_DIR}/MessageClientEnums.fbs
     ${SCHEMA_DIR}/MessageClient.fbs
+    ${SCHEMA_DIR}/MessageServerEnums.fbs
     ${SCHEMA_DIR}/MessageServer.fbs
     ${SCHEMA_DIR}/MessageDiscoveryClient.fbs
     ${SCHEMA_DIR}/MessageDiscoveryServer.fbs

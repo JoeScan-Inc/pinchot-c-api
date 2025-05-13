@@ -11,9 +11,6 @@ CameraLaserIterator::CameraLaserIterator(ScanHeadModel &model)
   jsCamera camera = JS_CAMERA_INVALID;
   jsLaser laser = JS_LASER_INVALID;
 
-  const uint32_t num_cameras =  model.m_specification.number_of_cameras;
-  const uint32_t num_lasers =  model.m_specification.number_of_lasers;
-
   for (auto &grp : model.m_specification.configuration_groups) {
     camera = model.CameraPortToId(grp.camera_port());
     laser = model.LaserPortToId(grp.laser_port());
@@ -36,5 +33,5 @@ void CameraLaserIterator::reverse()
 
 uint32_t CameraLaserIterator::count()
 {
-  return m_pairs.size();
+  return (uint32_t) m_pairs.size();
 }

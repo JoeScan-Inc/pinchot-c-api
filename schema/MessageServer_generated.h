@@ -6,7 +6,7 @@
 
 #include "flatbuffers/flatbuffers.h"
 
-#include "ScanHeadType_generated.h"
+#include "MessageServerEnums_generated.h"
 
 namespace joescan {
 namespace schema {
@@ -28,6 +28,14 @@ struct CameraData;
 struct CameraDataBuilder;
 struct CameraDataT;
 
+struct ScanSyncStatus;
+struct ScanSyncStatusBuilder;
+struct ScanSyncStatusT;
+
+struct ScanSyncStatusData;
+struct ScanSyncStatusDataBuilder;
+struct ScanSyncStatusDataT;
+
 struct StatusData;
 struct StatusDataBuilder;
 struct StatusDataT;
@@ -46,35 +54,41 @@ enum MessageType : uint16_t {
   MessageType_IMAGE = 2,
   MessageType_MAPPLE_DATA = 3,
   MessageType_PROFILE = 4,
+  MessageType_SCANSYNC_STATUS = 5,
+  MessageType_HEART_BEAT = 6,
   MessageType_MIN = MessageType_NONE,
-  MessageType_MAX = MessageType_PROFILE
+  MessageType_MAX = MessageType_HEART_BEAT
 };
 
-inline const MessageType (&EnumValuesMessageType())[5] {
+inline const MessageType (&EnumValuesMessageType())[7] {
   static const MessageType values[] = {
     MessageType_NONE,
     MessageType_STATUS,
     MessageType_IMAGE,
     MessageType_MAPPLE_DATA,
-    MessageType_PROFILE
+    MessageType_PROFILE,
+    MessageType_SCANSYNC_STATUS,
+    MessageType_HEART_BEAT
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageType() {
-  static const char * const names[6] = {
+  static const char * const names[8] = {
     "NONE",
     "STATUS",
     "IMAGE",
     "MAPPLE_DATA",
     "PROFILE",
+    "SCANSYNC_STATUS",
+    "HEART_BEAT",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageType(MessageType e) {
-  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_PROFILE)) return "";
+  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_HEART_BEAT)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageType()[index];
 }
@@ -85,35 +99,38 @@ enum MessageData : uint8_t {
   MessageData_StatusData = 2,
   MessageData_MappleData = 3,
   MessageData_ProfileData = 4,
+  MessageData_ScanSyncStatusData = 5,
   MessageData_MIN = MessageData_NONE,
-  MessageData_MAX = MessageData_ProfileData
+  MessageData_MAX = MessageData_ScanSyncStatusData
 };
 
-inline const MessageData (&EnumValuesMessageData())[5] {
+inline const MessageData (&EnumValuesMessageData())[6] {
   static const MessageData values[] = {
     MessageData_NONE,
     MessageData_ImageData,
     MessageData_StatusData,
     MessageData_MappleData,
-    MessageData_ProfileData
+    MessageData_ProfileData,
+    MessageData_ScanSyncStatusData
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageData() {
-  static const char * const names[6] = {
+  static const char * const names[7] = {
     "NONE",
     "ImageData",
     "StatusData",
     "MappleData",
     "ProfileData",
+    "ScanSyncStatusData",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageData(MessageData e) {
-  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_ProfileData)) return "";
+  if (flatbuffers::IsOutRange(e, MessageData_NONE, MessageData_ScanSyncStatusData)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageData()[index];
 }
@@ -136,6 +153,10 @@ template<> struct MessageDataTraits<joescan::schema::server::MappleData> {
 
 template<> struct MessageDataTraits<joescan::schema::server::ProfileData> {
   static const MessageData enum_value = MessageData_ProfileData;
+};
+
+template<> struct MessageDataTraits<joescan::schema::server::ScanSyncStatusData> {
+  static const MessageData enum_value = MessageData_ScanSyncStatusData;
 };
 
 struct MessageDataUnion {
@@ -201,6 +222,14 @@ struct MessageDataUnion {
   const joescan::schema::server::ProfileDataT *AsProfileData() const {
     return type == MessageData_ProfileData ?
       reinterpret_cast<const joescan::schema::server::ProfileDataT *>(value) : nullptr;
+  }
+  joescan::schema::server::ScanSyncStatusDataT *AsScanSyncStatusData() {
+    return type == MessageData_ScanSyncStatusData ?
+      reinterpret_cast<joescan::schema::server::ScanSyncStatusDataT *>(value) : nullptr;
+  }
+  const joescan::schema::server::ScanSyncStatusDataT *AsScanSyncStatusData() const {
+    return type == MessageData_ScanSyncStatusData ?
+      reinterpret_cast<const joescan::schema::server::ScanSyncStatusDataT *>(value) : nullptr;
   }
 };
 
@@ -671,6 +700,165 @@ inline flatbuffers::Offset<CameraData> CreateCameraData(
 
 flatbuffers::Offset<CameraData> CreateCameraData(flatbuffers::FlatBufferBuilder &_fbb, const CameraDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct ScanSyncStatusT : public flatbuffers::NativeTable {
+  typedef ScanSyncStatus TableType;
+  uint32_t serial = 0;
+  uint32_t ip_addr = 0;
+  uint16_t firmware_version_major = 0;
+  uint16_t firmware_version_minor = 0;
+  uint16_t firmware_version_patch = 0;
+};
+
+struct ScanSyncStatus FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef ScanSyncStatusT NativeTableType;
+  typedef ScanSyncStatusBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_SERIAL = 4,
+    VT_IP_ADDR = 6,
+    VT_FIRMWARE_VERSION_MAJOR = 8,
+    VT_FIRMWARE_VERSION_MINOR = 10,
+    VT_FIRMWARE_VERSION_PATCH = 12
+  };
+  uint32_t serial() const {
+    return GetField<uint32_t>(VT_SERIAL, 0);
+  }
+  uint32_t ip_addr() const {
+    return GetField<uint32_t>(VT_IP_ADDR, 0);
+  }
+  uint16_t firmware_version_major() const {
+    return GetField<uint16_t>(VT_FIRMWARE_VERSION_MAJOR, 0);
+  }
+  uint16_t firmware_version_minor() const {
+    return GetField<uint16_t>(VT_FIRMWARE_VERSION_MINOR, 0);
+  }
+  uint16_t firmware_version_patch() const {
+    return GetField<uint16_t>(VT_FIRMWARE_VERSION_PATCH, 0);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_SERIAL) &&
+           VerifyField<uint32_t>(verifier, VT_IP_ADDR) &&
+           VerifyField<uint16_t>(verifier, VT_FIRMWARE_VERSION_MAJOR) &&
+           VerifyField<uint16_t>(verifier, VT_FIRMWARE_VERSION_MINOR) &&
+           VerifyField<uint16_t>(verifier, VT_FIRMWARE_VERSION_PATCH) &&
+           verifier.EndTable();
+  }
+  ScanSyncStatusT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ScanSyncStatusT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<ScanSyncStatus> Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ScanSyncStatusBuilder {
+  typedef ScanSyncStatus Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_serial(uint32_t serial) {
+    fbb_.AddElement<uint32_t>(ScanSyncStatus::VT_SERIAL, serial, 0);
+  }
+  void add_ip_addr(uint32_t ip_addr) {
+    fbb_.AddElement<uint32_t>(ScanSyncStatus::VT_IP_ADDR, ip_addr, 0);
+  }
+  void add_firmware_version_major(uint16_t firmware_version_major) {
+    fbb_.AddElement<uint16_t>(ScanSyncStatus::VT_FIRMWARE_VERSION_MAJOR, firmware_version_major, 0);
+  }
+  void add_firmware_version_minor(uint16_t firmware_version_minor) {
+    fbb_.AddElement<uint16_t>(ScanSyncStatus::VT_FIRMWARE_VERSION_MINOR, firmware_version_minor, 0);
+  }
+  void add_firmware_version_patch(uint16_t firmware_version_patch) {
+    fbb_.AddElement<uint16_t>(ScanSyncStatus::VT_FIRMWARE_VERSION_PATCH, firmware_version_patch, 0);
+  }
+  explicit ScanSyncStatusBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<ScanSyncStatus> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<ScanSyncStatus>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<ScanSyncStatus> CreateScanSyncStatus(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t serial = 0,
+    uint32_t ip_addr = 0,
+    uint16_t firmware_version_major = 0,
+    uint16_t firmware_version_minor = 0,
+    uint16_t firmware_version_patch = 0) {
+  ScanSyncStatusBuilder builder_(_fbb);
+  builder_.add_ip_addr(ip_addr);
+  builder_.add_serial(serial);
+  builder_.add_firmware_version_patch(firmware_version_patch);
+  builder_.add_firmware_version_minor(firmware_version_minor);
+  builder_.add_firmware_version_major(firmware_version_major);
+  return builder_.Finish();
+}
+
+flatbuffers::Offset<ScanSyncStatus> CreateScanSyncStatus(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ScanSyncStatusDataT : public flatbuffers::NativeTable {
+  typedef ScanSyncStatusData TableType;
+  std::vector<std::unique_ptr<joescan::schema::server::ScanSyncStatusT>> scansyncs{};
+};
+
+struct ScanSyncStatusData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef ScanSyncStatusDataT NativeTableType;
+  typedef ScanSyncStatusDataBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_SCANSYNCS = 4
+  };
+  const flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>> *scansyncs() const {
+    return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>> *>(VT_SCANSYNCS);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_SCANSYNCS) &&
+           verifier.VerifyVector(scansyncs()) &&
+           verifier.VerifyVectorOfTables(scansyncs()) &&
+           verifier.EndTable();
+  }
+  ScanSyncStatusDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ScanSyncStatusDataT *_o, const flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static flatbuffers::Offset<ScanSyncStatusData> Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusDataT* _o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ScanSyncStatusDataBuilder {
+  typedef ScanSyncStatusData Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_scansyncs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>>> scansyncs) {
+    fbb_.AddOffset(ScanSyncStatusData::VT_SCANSYNCS, scansyncs);
+  }
+  explicit ScanSyncStatusDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  flatbuffers::Offset<ScanSyncStatusData> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<ScanSyncStatusData>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<ScanSyncStatusData> CreateScanSyncStatusData(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>>> scansyncs = 0) {
+  ScanSyncStatusDataBuilder builder_(_fbb);
+  builder_.add_scansyncs(scansyncs);
+  return builder_.Finish();
+}
+
+inline flatbuffers::Offset<ScanSyncStatusData> CreateScanSyncStatusDataDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>> *scansyncs = nullptr) {
+  auto scansyncs__ = scansyncs ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>>(*scansyncs) : 0;
+  return joescan::schema::server::CreateScanSyncStatusData(
+      _fbb,
+      scansyncs__);
+}
+
+flatbuffers::Offset<ScanSyncStatusData> CreateScanSyncStatusData(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct StatusDataT : public flatbuffers::NativeTable {
   typedef StatusData TableType;
   uint32_t min_scan_period_ns = 0;
@@ -679,6 +867,8 @@ struct StatusDataT : public flatbuffers::NativeTable {
   uint32_t num_profiles_sent = 0;
   std::vector<int64_t> encoders{};
   std::vector<std::unique_ptr<joescan::schema::server::CameraDataT>> camera_data{};
+  joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID;
+  bool laser_disabled = false;
 };
 
 struct StatusData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -690,7 +880,9 @@ struct StatusData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_NUM_PACKETS_SENT = 8,
     VT_NUM_PROFILES_SENT = 10,
     VT_ENCODERS = 12,
-    VT_CAMERA_DATA = 14
+    VT_CAMERA_DATA = 14,
+    VT_STATE = 16,
+    VT_LASER_DISABLED = 18
   };
   uint32_t min_scan_period_ns() const {
     return GetField<uint32_t>(VT_MIN_SCAN_PERIOD_NS, 0);
@@ -710,6 +902,12 @@ struct StatusData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::CameraData>> *camera_data() const {
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::CameraData>> *>(VT_CAMERA_DATA);
   }
+  joescan::schema::server::ScanHeadState state() const {
+    return static_cast<joescan::schema::server::ScanHeadState>(GetField<uint16_t>(VT_STATE, 0));
+  }
+  bool laser_disabled() const {
+    return GetField<uint8_t>(VT_LASER_DISABLED, 0) != 0;
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_MIN_SCAN_PERIOD_NS) &&
@@ -721,6 +919,8 @@ struct StatusData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
            VerifyOffset(verifier, VT_CAMERA_DATA) &&
            verifier.VerifyVector(camera_data()) &&
            verifier.VerifyVectorOfTables(camera_data()) &&
+           VerifyField<uint16_t>(verifier, VT_STATE) &&
+           VerifyField<uint8_t>(verifier, VT_LASER_DISABLED) &&
            verifier.EndTable();
   }
   StatusDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -750,6 +950,12 @@ struct StatusDataBuilder {
   void add_camera_data(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::CameraData>>> camera_data) {
     fbb_.AddOffset(StatusData::VT_CAMERA_DATA, camera_data);
   }
+  void add_state(joescan::schema::server::ScanHeadState state) {
+    fbb_.AddElement<uint16_t>(StatusData::VT_STATE, static_cast<uint16_t>(state), 0);
+  }
+  void add_laser_disabled(bool laser_disabled) {
+    fbb_.AddElement<uint8_t>(StatusData::VT_LASER_DISABLED, static_cast<uint8_t>(laser_disabled), 0);
+  }
   explicit StatusDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -768,7 +974,9 @@ inline flatbuffers::Offset<StatusData> CreateStatusData(
     uint32_t num_packets_sent = 0,
     uint32_t num_profiles_sent = 0,
     flatbuffers::Offset<flatbuffers::Vector<int64_t>> encoders = 0,
-    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::CameraData>>> camera_data = 0) {
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::server::CameraData>>> camera_data = 0,
+    joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID,
+    bool laser_disabled = false) {
   StatusDataBuilder builder_(_fbb);
   builder_.add_global_time_ns(global_time_ns);
   builder_.add_camera_data(camera_data);
@@ -776,6 +984,8 @@ inline flatbuffers::Offset<StatusData> CreateStatusData(
   builder_.add_num_profiles_sent(num_profiles_sent);
   builder_.add_num_packets_sent(num_packets_sent);
   builder_.add_min_scan_period_ns(min_scan_period_ns);
+  builder_.add_state(state);
+  builder_.add_laser_disabled(laser_disabled);
   return builder_.Finish();
 }
 
@@ -786,7 +996,9 @@ inline flatbuffers::Offset<StatusData> CreateStatusDataDirect(
     uint32_t num_packets_sent = 0,
     uint32_t num_profiles_sent = 0,
     const std::vector<int64_t> *encoders = nullptr,
-    const std::vector<flatbuffers::Offset<joescan::schema::server::CameraData>> *camera_data = nullptr) {
+    const std::vector<flatbuffers::Offset<joescan::schema::server::CameraData>> *camera_data = nullptr,
+    joescan::schema::server::ScanHeadState state = joescan::schema::server::ScanHeadState_INVALID,
+    bool laser_disabled = false) {
   auto encoders__ = encoders ? _fbb.CreateVector<int64_t>(*encoders) : 0;
   auto camera_data__ = camera_data ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::server::CameraData>>(*camera_data) : 0;
   return joescan::schema::server::CreateStatusData(
@@ -796,7 +1008,9 @@ inline flatbuffers::Offset<StatusData> CreateStatusDataDirect(
       num_packets_sent,
       num_profiles_sent,
       encoders__,
-      camera_data__);
+      camera_data__,
+      state,
+      laser_disabled);
 }
 
 flatbuffers::Offset<StatusData> CreateStatusData(flatbuffers::FlatBufferBuilder &_fbb, const StatusDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -929,6 +1143,9 @@ struct MessageServer FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const joescan::schema::server::ProfileData *data_as_ProfileData() const {
     return data_type() == joescan::schema::server::MessageData_ProfileData ? static_cast<const joescan::schema::server::ProfileData *>(data()) : nullptr;
   }
+  const joescan::schema::server::ScanSyncStatusData *data_as_ScanSyncStatusData() const {
+    return data_type() == joescan::schema::server::MessageData_ScanSyncStatusData ? static_cast<const joescan::schema::server::ScanSyncStatusData *>(data()) : nullptr;
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint16_t>(verifier, VT_TYPE) &&
@@ -956,6 +1173,10 @@ template<> inline const joescan::schema::server::MappleData *MessageServer::data
 
 template<> inline const joescan::schema::server::ProfileData *MessageServer::data_as<joescan::schema::server::ProfileData>() const {
   return data_as_ProfileData();
+}
+
+template<> inline const joescan::schema::server::ScanSyncStatusData *MessageServer::data_as<joescan::schema::server::ScanSyncStatusData>() const {
+  return data_as_ScanSyncStatusData();
 }
 
 struct MessageServerBuilder {
@@ -1128,6 +1349,70 @@ inline flatbuffers::Offset<CameraData> CreateCameraData(flatbuffers::FlatBufferB
       _temperature);
 }
 
+inline ScanSyncStatusT *ScanSyncStatus::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ScanSyncStatusT>(new ScanSyncStatusT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ScanSyncStatus::UnPackTo(ScanSyncStatusT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = serial(); _o->serial = _e; }
+  { auto _e = ip_addr(); _o->ip_addr = _e; }
+  { auto _e = firmware_version_major(); _o->firmware_version_major = _e; }
+  { auto _e = firmware_version_minor(); _o->firmware_version_minor = _e; }
+  { auto _e = firmware_version_patch(); _o->firmware_version_patch = _e; }
+}
+
+inline flatbuffers::Offset<ScanSyncStatus> ScanSyncStatus::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateScanSyncStatus(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<ScanSyncStatus> CreateScanSyncStatus(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const ScanSyncStatusT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _serial = _o->serial;
+  auto _ip_addr = _o->ip_addr;
+  auto _firmware_version_major = _o->firmware_version_major;
+  auto _firmware_version_minor = _o->firmware_version_minor;
+  auto _firmware_version_patch = _o->firmware_version_patch;
+  return joescan::schema::server::CreateScanSyncStatus(
+      _fbb,
+      _serial,
+      _ip_addr,
+      _firmware_version_major,
+      _firmware_version_minor,
+      _firmware_version_patch);
+}
+
+inline ScanSyncStatusDataT *ScanSyncStatusData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ScanSyncStatusDataT>(new ScanSyncStatusDataT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ScanSyncStatusData::UnPackTo(ScanSyncStatusDataT *_o, const flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = scansyncs(); if (_e) { _o->scansyncs.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->scansyncs[_i] = std::unique_ptr<joescan::schema::server::ScanSyncStatusT>(_e->Get(_i)->UnPack(_resolver)); } } }
+}
+
+inline flatbuffers::Offset<ScanSyncStatusData> ScanSyncStatusData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
+  return CreateScanSyncStatusData(_fbb, _o, _rehasher);
+}
+
+inline flatbuffers::Offset<ScanSyncStatusData> CreateScanSyncStatusData(flatbuffers::FlatBufferBuilder &_fbb, const ScanSyncStatusDataT *_o, const flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { flatbuffers::FlatBufferBuilder *__fbb; const ScanSyncStatusDataT* __o; const flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _scansyncs = _o->scansyncs.size() ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::server::ScanSyncStatus>> (_o->scansyncs.size(), [](size_t i, _VectorArgs *__va) { return CreateScanSyncStatus(*__va->__fbb, __va->__o->scansyncs[i].get(), __va->__rehasher); }, &_va ) : 0;
+  return joescan::schema::server::CreateScanSyncStatusData(
+      _fbb,
+      _scansyncs);
+}
+
 inline StatusDataT *StatusData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<StatusDataT>(new StatusDataT());
   UnPackTo(_o.get(), _resolver);
@@ -1143,6 +1428,8 @@ inline void StatusData::UnPackTo(StatusDataT *_o, const flatbuffers::resolver_fu
   { auto _e = num_profiles_sent(); _o->num_profiles_sent = _e; }
   { auto _e = encoders(); if (_e) { _o->encoders.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->encoders[_i] = _e->Get(_i); } } }
   { auto _e = camera_data(); if (_e) { _o->camera_data.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->camera_data[_i] = std::unique_ptr<joescan::schema::server::CameraDataT>(_e->Get(_i)->UnPack(_resolver)); } } }
+  { auto _e = state(); _o->state = _e; }
+  { auto _e = laser_disabled(); _o->laser_disabled = _e; }
 }
 
 inline flatbuffers::Offset<StatusData> StatusData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const StatusDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -1159,6 +1446,8 @@ inline flatbuffers::Offset<StatusData> CreateStatusData(flatbuffers::FlatBufferB
   auto _num_profiles_sent = _o->num_profiles_sent;
   auto _encoders = _o->encoders.size() ? _fbb.CreateVector(_o->encoders) : 0;
   auto _camera_data = _o->camera_data.size() ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::server::CameraData>> (_o->camera_data.size(), [](size_t i, _VectorArgs *__va) { return CreateCameraData(*__va->__fbb, __va->__o->camera_data[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _state = _o->state;
+  auto _laser_disabled = _o->laser_disabled;
   return joescan::schema::server::CreateStatusData(
       _fbb,
       _min_scan_period_ns,
@@ -1166,7 +1455,9 @@ inline flatbuffers::Offset<StatusData> CreateStatusData(flatbuffers::FlatBufferB
       _num_packets_sent,
       _num_profiles_sent,
       _encoders,
-      _camera_data);
+      _camera_data,
+      _state,
+      _laser_disabled);
 }
 
 inline MappleDataT *MappleData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {
@@ -1254,6 +1545,10 @@ inline bool VerifyMessageData(flatbuffers::Verifier &verifier, const void *obj, 
       auto ptr = reinterpret_cast<const joescan::schema::server::ProfileData *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case MessageData_ScanSyncStatusData: {
+      auto ptr = reinterpret_cast<const joescan::schema::server::ScanSyncStatusData *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -1288,6 +1583,10 @@ inline void *MessageDataUnion::UnPack(const void *obj, MessageData type, const f
       auto ptr = reinterpret_cast<const joescan::schema::server::ProfileData *>(obj);
       return ptr->UnPack(resolver);
     }
+    case MessageData_ScanSyncStatusData: {
+      auto ptr = reinterpret_cast<const joescan::schema::server::ScanSyncStatusData *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -1310,6 +1609,10 @@ inline flatbuffers::Offset<void> MessageDataUnion::Pack(flatbuffers::FlatBufferB
       auto ptr = reinterpret_cast<const joescan::schema::server::ProfileDataT *>(value);
       return CreateProfileData(_fbb, ptr, _rehasher).Union();
     }
+    case MessageData_ScanSyncStatusData: {
+      auto ptr = reinterpret_cast<const joescan::schema::server::ScanSyncStatusDataT *>(value);
+      return CreateScanSyncStatusData(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -1330,6 +1633,10 @@ inline MessageDataUnion::MessageDataUnion(const MessageDataUnion &u) : type(u.ty
     }
     case MessageData_ProfileData: {
       FLATBUFFERS_ASSERT(false);  // joescan::schema::server::ProfileDataT not copyable.
+      break;
+    }
+    case MessageData_ScanSyncStatusData: {
+      FLATBUFFERS_ASSERT(false);  // joescan::schema::server::ScanSyncStatusDataT not copyable.
       break;
     }
     default:
@@ -1356,6 +1663,11 @@ inline void MessageDataUnion::Reset() {
     }
     case MessageData_ProfileData: {
       auto ptr = reinterpret_cast<joescan::schema::server::ProfileDataT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessageData_ScanSyncStatusData: {
+      auto ptr = reinterpret_cast<joescan::schema::server::ScanSyncStatusDataT *>(value);
       delete ptr;
       break;
     }

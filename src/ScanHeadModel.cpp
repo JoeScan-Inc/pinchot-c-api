@@ -217,18 +217,8 @@ bool ScanHeadModel::IsLaserValid(jsLaser laser) const
 
 bool ScanHeadModel::IsConfigurationValid(jsScanHeadConfiguration &cfg) const
 {
-  const uint32_t max_camera_exposure = m_specification.max_camera_exposure_us;
-  const uint32_t min_camera_exposure = m_specification.min_camera_exposure_us;
   const uint32_t max_laser_on = m_specification.max_laser_on_time_us;
   const uint32_t min_laser_on = m_specification.min_laser_on_time_us;
-
-  if ((cfg.camera_exposure_time_max_us > max_camera_exposure) ||
-      (cfg.camera_exposure_time_min_us < min_camera_exposure) ||
-      (cfg.camera_exposure_time_max_us < cfg.camera_exposure_time_def_us) ||
-      (cfg.camera_exposure_time_max_us < cfg.camera_exposure_time_min_us) ||
-      (cfg.camera_exposure_time_def_us < cfg.camera_exposure_time_min_us)) {
-    return false;
-  }
 
   if ((cfg.laser_on_time_max_us > max_laser_on) ||
       (cfg.laser_on_time_min_us < min_laser_on) ||

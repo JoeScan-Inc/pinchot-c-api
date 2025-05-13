@@ -20,7 +20,7 @@ namespace joescan {
   int Send(uint32_t ip, uint16_t port,
            flatbuffers::FlatBufferBuilder &builder) const;
   int Send(uint32_t ip, uint16_t port, uint8_t *buf, uint32_t len) const;
-  int Read(uint8_t *buf, uint32_t len) const;
+  int Read(uint8_t *buf, uint32_t len, sockaddr *addr = nullptr) const;
 
  private:
    uint32_t m_timeout_s;

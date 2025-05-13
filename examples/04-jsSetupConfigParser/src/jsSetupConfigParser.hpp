@@ -228,7 +228,7 @@ jsError jsSetupConfigParse(
     jsUnits units = JS_UNITS_INVALID;
     if (0 == units_str.compare("Inches")) {
       units = JS_UNITS_INCHES;
-    } else if (0 == units_str.compare("Millimeter")) {
+    } else if (0 == units_str.compare("Millimeters")) {
       units = JS_UNITS_MILLIMETER;
     }
 
@@ -363,18 +363,22 @@ jsError jsSetupConfigParse(
 
         logger(JS_ERROR_NONE,
                head_str + " Window" + vertices_str);
+        if (vertices.size() >= 3) {
+          if (_IsLasHead(type)) {
+            r = jsScanHeadSetPolygonWindowLaser(
+              head, laser, &vertices[0], static_cast<int32_t>(vertices.size()));
+          } else {
+            r = jsScanHeadSetPolygonWindowCamera(
+              head, camera, &vertices[0], static_cast<int32_t>(vertices.size()));
+          }
 
-        if (_IsLasHead(type)) {
-          r = jsScanHeadSetPolygonWindowLaser(
-            head, laser, &vertices[0], vertices.size());
+          if (0 > r) {
+            logger((jsError) r, "jsScanHeadSetPolygonWindow failed");
+            return (jsError) r;
+          }
         } else {
-          r = jsScanHeadSetPolygonWindowCamera(
-            head, camera, &vertices[0], vertices.size());
-        }
-
-        if (0 > r) {
-          logger((jsError) r, "jsScanHeadSetWindowRectangular failed");
-          return (jsError) r;
+          logger(JS_ERROR_NONE,
+                 head_str + " No window applied for " + cstr + "/" + lstr);
         }
       }
 
@@ -389,6 +393,8 @@ jsError jsSetupConfigParse(
 
         jsExclusionMask *mask = new jsExclusionMask;
         memset(mask, 0, sizeof(jsExclusionMask)); 
+        uint32_t mask_width = JS_CAMERA_IMAGE_DATA_MAX_WIDTH;
+        uint32_t mask_height = JS_CAMERA_IMAGE_DATA_MAX_HEIGHT;
 
         json jexc = jobj["ExcludedRegions"];
         for (json::iterator itx = jexc.begin(); itx != jexc.end(); ++itx) {
@@ -398,6 +404,12 @@ jsError jsSetupConfigParse(
           uint32_t width = jexr["Width"];
           uint32_t height = jexr["Height"];
 
+          // clamp to mask size
+          left = std::max(0u, std::min(left, mask_width - 1));
+          top = std::max(0u, std::min(top, mask_height - 1));
+          uint32_t right = std::min(left + width, mask_width);
+          uint32_t bottom = std::min(top + height, mask_height);
+
           logger(JS_ERROR_NONE,
                  head_str + " Excluded Region " + pair_str +
                  ": left " + std::to_string(left) +
@@ -405,9 +417,9 @@ jsError jsSetupConfigParse(
                  ", width " + std::to_string(width) +
                  ", height " + std::to_string(height));
 
-          for (uint32_t m = 0; m < height; m++) {
-            for (uint32_t n = 0; n < width; n++) {
-              mask->bitmap[m][n] = 1;
+          for (uint32_t row = top; row < bottom; ++row) {
+            for (uint32_t col = left; col < right; ++col) {
+              mask->bitmap[row][col] = 1;
             }
           }
         }

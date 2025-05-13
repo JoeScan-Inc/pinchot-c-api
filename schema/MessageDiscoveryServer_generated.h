@@ -7,6 +7,7 @@
 #include "flatbuffers/flatbuffers.h"
 
 #include "ScanHeadType_generated.h"
+#include "MessageServerEnums_generated.h"
 
 namespace joescan {
 namespace schema {
@@ -15,42 +16,6 @@ namespace server {
 struct MessageServerDiscovery;
 struct MessageServerDiscoveryBuilder;
 struct MessageServerDiscoveryT;
-
-enum ScanHeadState : uint16_t {
-  ScanHeadState_INVALID = 0,
-  ScanHeadState_IDLE = 1,
-  ScanHeadState_CONNECTED = 2,
-  ScanHeadState_SCANNING = 3,
-  ScanHeadState_MIN = ScanHeadState_INVALID,
-  ScanHeadState_MAX = ScanHeadState_SCANNING
-};
-
-inline const ScanHeadState (&EnumValuesScanHeadState())[4] {
-  static const ScanHeadState values[] = {
-    ScanHeadState_INVALID,
-    ScanHeadState_IDLE,
-    ScanHeadState_CONNECTED,
-    ScanHeadState_SCANNING
-  };
-  return values;
-}
-
-inline const char * const *EnumNamesScanHeadState() {
-  static const char * const names[5] = {
-    "INVALID",
-    "IDLE",
-    "CONNECTED",
-    "SCANNING",
-    nullptr
-  };
-  return names;
-}
-
-inline const char *EnumNameScanHeadState(ScanHeadState e) {
-  if (flatbuffers::IsOutRange(e, ScanHeadState_INVALID, ScanHeadState_SCANNING)) return "";
-  const size_t index = static_cast<size_t>(e);
-  return EnumNamesScanHeadState()[index];
-}
 
 struct MessageServerDiscoveryT : public flatbuffers::NativeTable {
   typedef MessageServerDiscovery TableType;

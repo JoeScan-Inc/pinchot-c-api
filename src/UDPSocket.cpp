@@ -83,7 +83,7 @@ int UDPSocket::Send(uint32_t ip_addr, uint16_t port, uint8_t *buf,
   return 0;
 }
 
-int UDPSocket::Read(uint8_t *buf, uint32_t len) const
+int UDPSocket::Read(uint8_t *buf, uint32_t len, sockaddr *addr) const
 {
   SOCKET fd = m_iface.sockfd;
 
@@ -105,9 +105,21 @@ int UDPSocket::Read(uint8_t *buf, uint32_t len) const
     return 0;
   }
 
-  r = recv(m_iface.sockfd, reinterpret_cast<char *>(buf), len, 0);
-  if (0 > r) {
-    return JS_ERROR_NETWORK;
+  if (nullptr == addr) {
+    r = recv(m_iface.sockfd, reinterpret_cast<char *>(buf), len, 0);
+    if (0 > r) {
+      return JS_ERROR_NETWORK;
+    }
+  } else {
+    #ifdef _WIN32
+    int fromlen = sizeof(sockaddr);
+    #else
+    unsigned int fromlen = sizeof(sockaddr);
+    #endif
+    r = recvfrom(m_iface.sockfd, reinterpret_cast<char *>(buf), len, 0, addr, &fromlen);
+    if (0 > r || fromlen != sizeof(sockaddr_in)) {
+      return JS_ERROR_NETWORK;
+    }
   }
 
   return r;

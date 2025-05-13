@@ -20,6 +20,22 @@ namespace joescan {
 class ScanHead;
 class ScanHeadModel;
 
+/**
+ * This class acts as an iterator that loops over every valid camera/laser pair
+ * that a given scan head has. Usage will look like the following:
+ *
+ *  ```
+ *  auto iter = CameraLaserIterator(scan_head);
+ *  for (auto &pair : iter) {
+ *    jsCamera camera = pair.first;
+ *    jsLaser laser = pair.second;
+ *    // do something here...
+ *  }
+ *  ```
+ *
+ * @note Default behavior is to iterate from the lowest camera/laser pair to
+ * the highest.
+ */
 class CameraLaserIterator {
  private:
   typedef std::vector<std::pair<jsCamera, jsLaser>> CameraLaserPairVector;
@@ -30,7 +46,9 @@ class CameraLaserIterator {
   CameraLaserIterator(ScanHead &scan_head);
   CameraLaserIterator(ScanHead *scan_head);
 
+  /// reverses the order of the camera/laser pairs to highest to lowest
   void reverse();
+  /// number of camera/laser pairs
   uint32_t count();
 
   typedef CameraLaserPairVector::iterator iterator;

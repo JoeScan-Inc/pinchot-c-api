@@ -23,10 +23,11 @@ class TCPSocket : public NetworkInterface {
   ~TCPSocket() = default;
   int Send(flatbuffers::FlatBufferBuilder &builder);
   int Send(uint8_t *buf, uint32_t len);
-  inline int Read(uint8_t *buf, uint32_t len, volatile bool *is_cancel_flag=nullptr);
+  inline int Read(uint8_t *buf, uint32_t len, volatile bool *is_cancel_flag=nullptr,
+                  struct timeval *timeout=nullptr);
 
  private:
-  inline int SelectWaitRead();
+  inline int SelectWaitRead(struct timeval *timeout=nullptr);
   inline int SelectWaitWrite();
 
   uint32_t m_timeout_s;
@@ -35,7 +36,8 @@ class TCPSocket : public NetworkInterface {
 /**
  * inline this function to get slightly faster profile reads
  */
-inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_active)
+inline int TCPSocket::Read(uint8_t *buf, uint32_t len,
+                      volatile bool *is_read_active, struct timeval *timeout)
 {
   SOCKET fd = m_iface.sockfd;
   char *dst;
@@ -52,8 +54,8 @@ inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_ac
   dst = reinterpret_cast<char *>(&msg_len);
   n = 0;
   do {
-    r = SelectWaitRead();
-    if (0 != r) {
+    r = SelectWaitRead(timeout);
+    if (0 >= r) {
       return r;
     }
 
@@ -96,8 +98,8 @@ inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_ac
   dst = reinterpret_cast<char *>(buf);
   n = 0;
   do {
-    r = SelectWaitRead();
-    if (0 != r) {
+    r = SelectWaitRead(timeout);
+    if (0 > r) {
       return r;
     }
 
@@ -131,7 +133,7 @@ inline int TCPSocket::Read(uint8_t *buf, uint32_t len, volatile bool *is_read_ac
   return n;
 }
 
-inline int TCPSocket::SelectWaitRead()
+inline int TCPSocket::SelectWaitRead(struct timeval *timeout)
 {
   SOCKET sockfd = m_iface.sockfd;
   fd_set fds;
@@ -139,39 +141,46 @@ inline int TCPSocket::SelectWaitRead()
   struct timeval tv;
   int r = 0;
 
-  do {
+  while (true) {
     FD_ZERO(&fds);
     FD_SET(sockfd, &fds);
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    ptv = (0 != tv.tv_sec) ? &tv : nullptr;
+    if (timeout != nullptr) {
+      tv.tv_sec = timeout->tv_sec;
+      tv.tv_usec = timeout->tv_usec;
+    } else {
+      tv.tv_sec = 1;
+      tv.tv_usec = 0;
+    }
 
+    ptv = &tv;
     r = select(int(sockfd) + 1, &fds, NULL, NULL, ptv);
     if (0 < r) {
       // activity on file descriptor
-      break;
+      return r;
     } else if (0 == r) {
+      // we timed out after 1 second,
+      // connection is very likely severed
       return 0;
     }
-
     // no activity on file descriptor
-    int check = 0;
+
     int err = 0;
 #ifdef _WIN32
-    check = WSAEINTR;
     err = WSAGetLastError();
-#else
-    check = EINTR;
-    err = errno;
-#endif
-    if (err != check) {
-      // timeout or error we don't handle
-      NetworkInterface::Close();
-      return JS_ERROR_NETWORK;
+    if (err == WSAEINTR) {
+        continue;
     }
-  } while (1);
+#else
+    err = errno;
+    if (err == EINTR) {
+        continue;
+    }
+#endif
 
-  return 0;
+    // fatal error that we don't handle
+    NetworkInterface::Close();
+    return JS_ERROR_NETWORK;
+  }
 }
 
 inline int TCPSocket::SelectWaitWrite()
@@ -182,7 +191,7 @@ inline int TCPSocket::SelectWaitWrite()
   struct timeval tv;
   int r = 0;
 
-  do {
+  while(true) {
     FD_ZERO(&fds);
     FD_SET(sockfd, &fds);
     tv.tv_sec = m_timeout_s;
@@ -192,29 +201,32 @@ inline int TCPSocket::SelectWaitWrite()
     r = select(int(sockfd) + 1, NULL, &fds, NULL, ptv);
     if (0 < r) {
       // activity on file descriptor
-      break;
+      return r;
     } else if (0 == r) {
+      // we timed out after 1 second,
+      // connection is very likely severed
       return 0;
     }
 
     // no activity on file descriptor
-    int check = 0;
+
     int err = 0;
 #ifdef _WIN32
-    check = WSAEINTR;
     err = WSAGetLastError();
-#else
-    check = EINTR;
-    err = errno;
-#endif
-    if (err != check) {
-      // timeout or error we don't handle
-      NetworkInterface::Close();
-      return JS_ERROR_NETWORK;
+    if (err == WSAEINTR) {
+        continue;
     }
-  } while (1);
+#else
+    err = errno;
+    if (err == EINTR) {
+        continue;
+    }
+#endif
 
-  return 0;
+    // fatal error that we don't handle
+    NetworkInterface::Close();
+    return JS_ERROR_NETWORK;
+  };
 }
 
 }

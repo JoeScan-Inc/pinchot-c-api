@@ -29,6 +29,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <shared_mutex>
 
 namespace joescan {
 
@@ -81,9 +82,9 @@ class ScanHead {
    */
   uint32_t GetIpAddress() const;
 
-  SemanticVersion GetFirmwareVersion();
+  SemanticVersion GetFirmwareVersion() const;
 
-  jsScanHeadCapabilities GetCapabilities();
+  jsScanHeadCapabilities GetCapabilities() const;
 
   /**
    * Performs client request to scan head to connect.
@@ -113,6 +114,7 @@ class ScanHead {
    *
    * @param period_us The scan period in microseconds
    * @param fmt The format of scan data to receive
+   * @param is_frame_scanning Set to true if frame scanning
    *
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
@@ -133,13 +135,24 @@ class ScanHead {
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
   int SendKeepAlive();
+  /**
+   * Sends HeartBeat request, listen for beat from server.
+   * @param timeout defines how long to wait on reading from server
+   *
+   * @return `0` on success, negative value mapping to `jsError` on error.
+   */
+  int GetHeartBeat(struct timeval *timeout);
+
+  int SendEncoders(uint32_t serial_main, uint32_t serial_aux1,
+                   uint32_t serial_aux2);
 
   /**
    * Performs client request to the scan head to start scanning.
    *
-   * @param start_time_ns The global time to have the scan head start scanning.
-   * Empty argument will leave the scan head to determine it's own time to
-   * start.
+   * @param start_time_ns The global time to have the scan head start scanning
+   *        Empty argument will leave the scan head to determine it's own time
+   *        to start.
+   * @param is_frame_scanning Set to true if frame scanning
    *
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
@@ -161,9 +174,9 @@ class ScanHead {
    *
    * @return True if connected, false is disconnected.
    */
-  bool IsConnected();
+  bool IsConnected() const;
 
-  bool IsScanning();
+  bool IsScanning() const;
 
   int32_t GetImage(jsCamera camera, jsLaser laser, uint32_t camera_exposure_us,
                    uint32_t laser_on_time_us, jsCameraImage *image);
@@ -173,12 +186,14 @@ class ScanHead {
   int32_t GetImage(jsLaser laser, uint32_t camera_exposure_us,
                    uint32_t laser_on_time_us, jsCameraImage *image);
 
-  int32_t GetProfile(jsCamera camera, uint32_t camera_exposure_us,
-                     uint32_t laser_on_time_us, jsRawProfile *profile);
+  int32_t GetProfile(jsCamera camera, jsDiagnosticMode mode,
+                     uint32_t camera_exposure_us, uint32_t laser_on_time_us,
+                     jsRawProfile *profile);
 
-  int32_t GetProfile(jsLaser laser, uint32_t camera_exposure_us,
-                     uint32_t laser_on_time_us, jsRawProfile *profile);
-  int32_t GetProfile(jsCamera camera, jsLaser laser,
+  int32_t GetProfile(jsLaser laser, jsDiagnosticMode mode,
+                     uint32_t camera_exposure_us, uint32_t laser_on_time_us,
+                     jsRawProfile *profile);
+  int32_t GetProfile(jsCamera camera, jsLaser laser, jsDiagnosticMode mode,
                      uint32_t camera_exposure_us, uint32_t laser_on_time_us,
                      jsRawProfile *profile);
 
@@ -199,6 +214,10 @@ class ScanHead {
    */
   uint32_t WaitUntilAvailableProfiles(uint32_t count, uint32_t timeout_us);
 
+  int32_t ClearProfiles();
+  int32_t GetProfiles(jsRawProfile *profiles, uint32_t max_profiles);
+  int32_t GetProfiles(jsProfile *profiles, uint32_t max_profiles);
+
   /**
    * Requests a new status message from the scan head.
    *
@@ -206,6 +225,16 @@ class ScanHead {
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
   int GetStatusMessage(StatusMessage *msg);
+
+  /**
+   * Requests a new scansync message from the scan head.
+   *
+   * @param scan_syncs ScanSyncs seen by scanner
+   * @param max_results number of ScanSyncs, limited by JS_ENCODER_MAX
+   * @return `0` on success, negative value mapping to `jsError` on error.
+   */
+  int32_t SendScanSyncStatusRequest(
+    jsScanSyncDiscovered *scan_syncs, uint32_t max_results);
 
   /**
    * Obtains the last requested status message from a scan head.
@@ -227,7 +256,6 @@ class ScanHead {
   ScanManager &GetScanManager();
 
   ProfileQueue *GetProfileQueue();
-  CameraLaserIterator GetPairIterator();
 
   /**
    * Verifies a given `jsScanHeadConfiguration` to ensure it is valid and can
@@ -265,16 +293,16 @@ class ScanHead {
    *
    * @return The period in microseconds.
    */
-  uint32_t GetMinScanPeriod();
+  uint32_t GetMinScanPeriod() const;
 
   /**
    * Clears all camera / laser pairs configured for scanning.
    */
   void ResetScanPairs();
 
-  jsCamera GetPairedCamera(jsLaser laser);
-  jsLaser GetPairedLaser(jsCamera camera);
-  uint32_t GetCameraLaserPairCount();
+  jsCamera GetPairedCamera(jsLaser laser) const;
+  jsLaser GetPairedLaser(jsCamera camera) const;
+  uint32_t GetCameraLaserPairCount() const;
 
   /**
    * Adds a new camera / laser pair within the `ScanHead` to be configured for
@@ -286,8 +314,8 @@ class ScanHead {
    * @param end_offset_us Time in microseconds when scan is to stop in period.
    * @return `0` on success, negative value mapping to `jsError` on error.
    */
-  int AddScanPair(jsCamera camera, jsLaser laser,
-                     jsScanHeadConfiguration &cfg, uint32_t end_offset_us);
+  int AddScanPair(jsCamera camera, jsLaser laser, jsScanHeadConfiguration &cfg,
+                  uint32_t end_offset_us);
 
   /**
    * Gets the maximum number of camera / laser pairs that can be configured for
@@ -295,10 +323,18 @@ class ScanHead {
    *
    * @return The total number of scan pairs supported.
    */
-  uint32_t GetMaxScanPairs();
+  uint32_t GetScanPairsMax() const;
+
+  /**
+   * Gets the total number of scan pairs set. This should be equal to the
+   * number of times `AddScanPair` is successfully called.
+   *
+   * @return The total number of scan pairs configured.
+   */
+  uint32_t GetScanPairsCount() const;
 
   int SetCableOrientation(jsCableOrientation cable);
-  jsCableOrientation GetCableOrientation();
+  jsCableOrientation GetCableOrientation() const;
 
   /**
    * Sets the alignment settings for the scan head.
@@ -332,29 +368,48 @@ class ScanHead {
   int GetBrightnessCorrection(jsLaser laser,
                               jsBrightnessCorrection_BETA *correction);
 
-  uint32_t GetMinimumEncoderTravel();
+  uint32_t GetMinimumEncoderTravel() const;
   int32_t SetMinimumEncoderTravel(uint32_t travel);
 
-  uint32_t GetIdleScanPeriod();
+  uint32_t GetIdleScanPeriod() const;
   int32_t SetIdleScanPeriod(uint32_t period_us);
 
-  uint32_t GetLastSequenceNumber();
+  uint32_t GetLastSequenceNumber() const;
   /**
    * Sets the window to be used for scanning with the scan head.
    *
    * @param window The scan window.
    */
-  int SetWindow(ScanWindow &window);
-  int SetWindow(jsCamera camera, ScanWindow &window);
-  int SetWindow(jsLaser laser, ScanWindow &window);
+  int SetWindowUnconstrained();
+  int SetWindowUnconstrained(jsCamera camera);
+  int SetWindowUnconstrained(jsLaser laser);
+  int SetWindow(double top, double bottom, double left, double right);
+  int SetWindow(jsCamera camera,
+                double top,
+                double bottom,
+                double left,
+                double right);
+  int SetWindow(jsLaser laser,
+                double top,
+                double bottom,
+                double left,
+                double right);
   int SetPolygonWindow(jsCoordinate *points, uint32_t points_len);
   int SetPolygonWindow(jsCamera camera, jsCoordinate *points,
                        uint32_t points_len);
   int SetPolygonWindow(jsLaser laser, jsCoordinate *points,
                        uint32_t points_len);
+  int GetWindowType(jsCamera camera, jsScanWindowType *type);
+  int GetWindowType(jsLaser laser, jsScanWindowType *type);
+  int GetWindowCoordinatesCount(jsCamera camera);
+  int GetWindowCoordinatesCount(jsLaser laser);
+  int GetWindowCoordinates(jsCamera camera, jsCoordinate *points);
+  int GetWindowCoordinates(jsLaser laser, jsCoordinate *points);
 
-  bool IsDirty();
+  bool IsDirty() const;
   void ClearDirty();
+
+  std::string GetErrorExtended() const;
 
  protected:
   friend CameraLaserIterator;
@@ -408,10 +463,12 @@ class ScanHead {
 
   flatbuffers::FlatBufferBuilder m_builder;
 
+  std::string m_error_extended_str;
   std::condition_variable m_new_data_cv;
   std::mutex m_new_data_mtx;
   std::thread m_receive_thread;
   std::mutex m_mutex;
+  std::shared_mutex m_queue_mutex;
 
   SemanticVersion m_firmware_version;
   uint32_t m_ip_address;
@@ -428,6 +485,7 @@ class ScanHead {
   volatile bool m_is_receive_thread_active;
   bool m_is_frame_scanning;
   bool m_is_scanning;
+  bool m_is_heart_beating;
 };
 
 } // namespace joescan

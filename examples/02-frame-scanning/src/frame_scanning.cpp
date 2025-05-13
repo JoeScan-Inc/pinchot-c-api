@@ -71,9 +71,6 @@ void initialize_scan_heads(jsScanSystem &scan_system,
   int32_t r = 0;
 
   jsScanHeadConfiguration config;
-  config.camera_exposure_time_min_us = 10000;
-  config.camera_exposure_time_def_us = 47000;
-  config.camera_exposure_time_max_us = 900000;
   config.laser_on_time_min_us = 100;
   config.laser_on_time_def_us = 100;
   config.laser_on_time_max_us = 1000;
@@ -330,7 +327,10 @@ static void receiver(jsScanSystem scan_system,
       // `jsScanSystemWaitUntilFrameAvailable`, we are now ready to read out
       // a frame of scan data.
       r = jsScanSystemGetFrame(scan_system, profiles);
-      if (0 >= r) {
+      if (0 == r) {
+        _invalid_count += profiles_per_frame;
+        continue;
+      } else if (0 > r) {
         throw ApiError("failed to read frame", r);
       }
 

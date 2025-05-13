@@ -10,6 +10,7 @@
  * @author JoeScan
  * @brief This file contains the interface for the client software used to
  * control scanning for JoeScan products.
+ *
  */
 
 #ifndef _JOESCAN_PINCHOT_H
@@ -63,8 +64,9 @@ typedef int64_t jsScanHead;
 
 /**
  * @brief Constant values used with this API.
+ * @note The `int64_t` is required to force the enum to hold 64 bit values.
  */
-enum jsConstants {
+enum jsConstants : int64_t {
   /** @brief Maximum string length of JS-50 scan head. */
   JS_SCAN_HEAD_TYPE_STR_MAX_LEN = 32,
   /** @brief Maximum string length of client network interface name. */
@@ -97,6 +99,12 @@ enum jsConstants {
    * scan head with one API call.
    */
   JS_SCAN_HEAD_PROFILES_MAX = 1000,
+  /** @brief Invalid serial number of a JS-50 scan head. */
+  JS_SCAN_HEAD_INVALID_SERIAL = 0,
+  /** @brief Invalid serial number of a ScanSync. */
+  JS_SCANSYNC_INVALID_SERIAL = 0,
+  /** @brief Invalid encoder value from ScanSync. */
+  JS_SCANSYNC_INVALID_ENCODER = INT64_MAX,
 };
 
 /**
@@ -145,8 +153,16 @@ enum jsError {
   JS_ERROR_NOT_FRAME_SCANNING = -16,
   /** @brief Configured phase table is not compatible with frame scanning. */
   JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE = -17,
+  /** @brief Error occurred due to empty phase table. */
+  JS_ERROR_PHASE_TABLE_EMPTY = -18,
+  /** @brief Function or argument is deprecated. */
+  JS_ERROR_DEPRECATED = -19,
+  /** @brief Invalid scan system reference provided to function. */
+  JS_ERROR_INVALID_SCAN_SYSTEM = -20,
+  /** @brief Invalid scan head reference provided to function. */
+  JS_ERROR_INVALID_SCAN_HEAD = -21,
   /** @brief Error occurred for an unknown reason; this should never happen. */
-  JS_ERROR_UNKNOWN = -18,
+  JS_ERROR_UNKNOWN = -22,
 
   JS_ERROR_FORCE_INT32_SIZE = INT32_MAX,
 };
@@ -174,6 +190,18 @@ typedef enum {
 
   JS_CABLE_ORIENTATION_FORCE_INT32_SIZE = INT32_MAX,
 } jsCableOrientation;
+
+/**
+ * @brief Enumerated value identifying the scan head window type
+*/
+typedef enum {
+  JS_SCAN_WINDOW_INVALID = 0,
+  JS_SCAN_WINDOW_UNCONSTRAINED = 1,
+  JS_SCAN_WINDOW_RECTANGULAR = 2,
+  JS_SCAN_WINDOW_POLYGONAL = 3,
+
+  JS_SCAN_WINDOW_FORCE_INT32_SIZE = INT32_MAX,
+} jsScanWindowType;
 
 /**
  * @brief Enumerated value identifying the scan head type.
@@ -222,7 +250,8 @@ typedef enum {
 } jsLaser;
 
 /**
- * @brief Data type for identifying an encoder on the scan head.
+ * @brief Data type for identifying an encoder and indexing into the
+ * `encoder_values` field in `jsProfile` and `jsRawProfile`.
  */
 typedef enum {
   JS_ENCODER_MAIN = 0,
@@ -250,6 +279,14 @@ typedef enum {
   JS_PROFILE_FLAG_ENCODER_MAIN_INDEX_Z = 1 << 6,
   /** @brief ScanSync sync input is logic high. */
   JS_PROFILE_FLAG_ENCODER_MAIN_SYNC = 1 << 7,
+  /** @brief ScanSync aux Y input is logic high. */
+  JS_PROFILE_FLAG_ENCODER_MAIN_AUX_Y = 1 << 8,
+  /** @brief ScanSync sync input connection is faulty. */
+  JS_PROFILE_FLAG_ENCODER_MAIN_FAULT_SYNC = 1 << 9,
+  /** @brief ScanSync laser disable input is logic high. */
+  JS_PROFILE_FLAG_ENCODER_MAIN_LASER_DISABLE = 1 << 10,
+  /** @brief ScanSync laser disable input is faulty. */
+  JS_PROFILE_FLAG_ENCODER_MAIN_FAULT_LASER_DISABLE = 1 << 11,
 
   JS_PROFILE_FLAGS_FORCE_INT32_SIZE = INT32_MAX,
 } jsProfileFlags;
@@ -293,9 +330,11 @@ typedef enum {
 
 typedef enum {
   JS_SCAN_HEAD_STATE_INVALID = 0,
-  JS_SCAN_HEAD_STATE_IDLE = 1,
+  JS_SCAN_HEAD_STATE_IDLE [[deprecated]] = 1,
+  JS_SCAN_HEAD_STATE_STANDBY = 1,
   JS_SCAN_HEAD_STATE_CONNECTED = 2,
   JS_SCAN_HEAD_STATE_SCANNING = 3,
+  JS_SCAN_HEAD_STATE_SCANNING_IDLE = 4,
 
   JS_SCAN_HEAD_STATE_FORCE_INT32_SIZE = INT32_MAX,
 } jsScanHeadState;
@@ -330,6 +369,31 @@ typedef struct {
   /** @brief Current state of the scan head. */
   jsScanHeadState state;
 } jsDiscovered;
+
+typedef struct {
+  /** @brief Serial number of ScanSync. */
+  uint32_t serial_number;
+  /**
+   * @brief Firmware major version number of the ScanSync.
+   * @note This field is only reported with ScanSync firmware v2.1.0+.
+   */
+  uint32_t firmware_version_major;
+  /**
+   * @brief Firmware minor version number of the ScanSync.
+   * @note This field is only reported with ScanSync firmware v2.1.0+.
+   */
+  uint32_t firmware_version_minor;
+  /**
+   * @brief Firmware patch version number of the ScanSync.
+   * @note This field is only reported with ScanSync firmware v2.1.0+.
+   */
+  uint32_t firmware_version_patch;
+  /**
+   * @brief IP address of the ScanSync.
+   * @note This field is only reported with ScanSync firmware v2.1.0+.
+   */
+  uint32_t ip_addr;
+} jsScanSyncDiscovered;
 
 /**
  * @brief Structure used to communicate the various capabilities and limits of
@@ -462,7 +526,43 @@ typedef struct {
   int32_t camera_b_temp;
   /** @brief Total number of profiles sent during the last scan period. */
   uint32_t num_profiles_sent;
+  /** @brief Current state of the scan head. */
+  jsScanHeadState state;
+  /** @brief Set to `true` if the ScanSync is currently disabling the laser(s). */
+  bool is_laser_disable;
 } jsScanHeadStatus;
+
+/**
+ * @brief Structure used to hold the status of a ScanSync.
+ */
+typedef struct {
+  /** @brief Encoder position at time of status. */
+  int64_t encoder;
+  /** @brief Time of ScanSync in nanoseconds when status was reported. */
+  uint64_t timestamp_ns;
+  /** @brief Time in nanoseconds when Sync input went logic high. */
+  uint64_t sync_timestamp_ns;
+  /** @brief Time in nanoseconds when Aux Y input went logic high. */
+  uint64_t aux_y_timestamp_ns;
+  /** @brief Time in nanoseconds when Index Z input went logic high. */
+  uint64_t index_z_timestamp_ns;
+  /** @brief Time in nanoseconds when Laser Disable input went logic high. */
+  uint64_t laser_disable_timestamp_ns;
+  /** @brief Serial number of the ScanSync */
+  uint32_t serial;
+  /** @brief Set to `true` if A input has fault. */
+  bool is_fault_a;
+  /** @brief Set to `true` if B input has fault. */
+  bool is_fault_b;
+  /** @brief Set to `true` if Sync input is logic high. */
+  bool is_sync;
+  /** @brief Set to `true` if Aux Y input is logic high. */
+  bool is_aux_y;
+  /** @brief Set to `true` if Index Z input is logic high. */
+  bool is_index_z;
+  /** @brief Set to `true` if Laser Disable input is logic high. */
+  bool is_laser_disable;
+} jsScanSyncStatus;
 
 /**
  * @brief A spatial coordinate point in scan system units.
@@ -692,7 +792,16 @@ typedef struct {
   #define POST __attribute__((sysv_abi))
 #endif
 
+#if defined _MSC_VER
+  #define DEPRECATED __declspec(deprecated)
+#elif defined(__GNUC__) || defined(__clang__)
+  #define DEPRECATED __attribute__((deprecated))
+#else
+  #define DEPRECATED
+#endif
+
 /**
+ * @ingroup Miscellaneous
  * @brief Obtains the semantic version of the client API presented in this
  * header. The version string will be of the form `vX.Y.Z`, where `X` is the
  * major version number, `Y` is the minor version number, and `Z` is the patch
@@ -705,6 +814,7 @@ EXPORTED void PRE jsGetAPIVersion(
   const char **version_str) POST;
 
 /**
+ * @ingroup Miscellaneous
  * @brief Obtains the semantic version of the client API presented as unsigned
  * integer values.
  *
@@ -718,6 +828,7 @@ EXPORTED void PRE jsGetAPISemanticVersion(
   uint32_t *patch) POST;
 
 /**
+ * @ingroup Miscellaneous
  * @brief Converts a `jsError` error value returned from an API function call
  * to a string value.
  *
@@ -729,6 +840,39 @@ EXPORTED void PRE jsGetError(
   const char **error_str) POST;
 
 /**
+ * @ingroup Miscellaneous
+ * @brief When a `jsScanSystem` function returns an error, this function can be
+ * called immediately after to obtain a more detailed message regarding the
+ * error.
+ *
+ * @note Calling another `jsScanSystem` function will clear the error message
+ * set from a previous function call.
+ *
+ * @param scan_system The scan system that encountered an error.
+ * @param error_extended_str Address to be updated with detailed error string.
+ */
+EXPORTED int32_t PRE jsScanSystemGetLastErrorExtended(
+  jsScanSystem scan_system,
+  const char **error_extended_str) POST;
+
+/**
+ * @ingroup Miscellaneous
+ * @brief When a `jsScanHead` function returns an error, this function can be
+ * called immediately after to obtain a more detailed message regarding the
+ * error.
+ *
+ * @note Calling another `jsScanHead` function will clear the error message
+ * set from a previous function call.
+ *
+ * @param scan_head The scan head that encountered an error.
+ * @param error_extended_str Address to be updated with detailed error string.
+ */
+EXPORTED int32_t PRE jsScanHeadGetLastErrorExtended(
+  jsScanHead scan_head,
+  const char **error_extended_str) POST;
+
+/**
+ * @ingroup Scanning
  * @brief Initializes a given `jsProfile` to a known invalid state to indicate
  * it has not been populated with data from the scan head.
  *
@@ -738,6 +882,7 @@ EXPORTED void PRE jsProfileInit(
   jsProfile *profile) POST;
 
 /**
+ * @ingroup Scanning
  * @brief Initializes a given `jsRawProfile` to a known invalid state to
  * indicate it has not been populated with data from the scan head.
  *
@@ -747,6 +892,7 @@ EXPORTED void PRE jsRawProfileInit(
   jsRawProfile *profile) POST;
 
 /**
+ * @ingroup Miscellaneous
  * @brief Performs a remote soft power cycle of a scan head.
  *
  * @note This function will only work with scan heads running v16.x.x firmware
@@ -768,6 +914,7 @@ int32_t jsPowerCycleScanHead(
   uint32_t serial_number) POST;
 
 /**
+ * @ingroup Connecting
  * @brief Creates a `jsScanSystem` used to manage and coordinate `jsScanHead`
  * objects.
  *
@@ -779,6 +926,7 @@ EXPORTED jsScanSystem PRE jsScanSystemCreate(
   jsUnits units) POST;
 
 /**
+ * @ingroup Connecting
  * @brief Frees a `jsScanSystem` and all resources associated with it. In
  * particular, this will free all `jsScanHead` objects created by this
  * object.
@@ -789,6 +937,7 @@ EXPORTED void PRE jsScanSystemFree(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Connecting
  * @brief Performs a network discovery to determine what scan heads are on the
  * network.
  *
@@ -800,12 +949,13 @@ EXPORTED int PRE jsScanSystemDiscover(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Connecting
  * @brief Obtains a list of all of the scan heads discovered on the network.
  *
  * @param scan_system The scan system that previously performed discovery.
  * @param results  Pointer to memory to store discover data. Note, the memory
  * pointed to by `results` must be at least `sizeof(jsDiscovered) * max_results`
- * in total number of bytes available.
+ * in total number of bytes.
  * @param max_results The maximum number of discovered results to read.
  * @return The total number of discovered scan heads on success, negative value
  * mapping to `jsError` on error.
@@ -816,22 +966,101 @@ EXPORTED int PRE jsScanSystemGetDiscovered(
   uint32_t max_results) POST;
 
 /**
- * @brief Gets the most recent encoder value reported by the ScanSync.
+ * @ingroup Connecting
+ * @brief Performs a network discovery to determine what ScanSyncs are on the
+ * network.
  *
- * @note The ScanSync provides encoder updates at 1ms intervals.
+ * @param scan_system The scan system to perform discovery.
+ * @return The total number of discovered ScanSyncs on success, negative value
+ * mapping to `jsError` on error.
+ */
+EXPORTED int PRE jsScanSystemScanSyncDiscover(
+  jsScanSystem scan_system) POST;
+
+/**
+ * @ingroup Connecting
+ * @brief Obtains a list of all of the ScanSyncs discovered on the network.
  *
- * @param scan_system Reference to the scan system.
- * @param encoder The selected encoder to obtain value from.
- * @param value Pointer to be updated with encoder value.
+ * @param scan_system The scan system that previously performed discovery.
+ * @param results  Pointer to memory to store discover data. Note, the memory
+ * pointed to by `results` must be at least
+ * `sizeof(jsScanSyncDiscovered) * max_results` in total number of bytes.
+ * @param max_results The maximum number of discovered results to read.
+ * @return The total number of discovered ScanSyncs on success, negative value
+ * mapping to `jsError` on error.
+ */
+EXPORTED int PRE jsScanSystemGetScanSyncDiscovered(
+  jsScanSystem scan_system,
+  jsScanSyncDiscovered *results,
+  uint32_t max_results) POST;
+
+/**
+ * @ingroup Configuration 
+ * @brief Assigns one or many ScanSyncs to an encoder index within the scan
+ * system to then be applied to all of its scan heads.
  *
+ * @note This function should be called after all the scan heads have been
+ * added to the scan system.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @param serial_main Serial number of the ScanSync Main, required.
+ * @param serial_aux1 Serial number of the ScanSync Aux1, or
+ * `JS_SCANSYNC_INVALID_SERIAL` for unused.
+ * @param serial_aux2 Serial number of the ScanSync Aux2, or
+ * `JS_SCANSYNC_INVALID_SERIAL` for unused.
  * @return `0` on success, negative value `jsError` on error.
  */
-EXPORTED int PRE jsScanSystemGetEncoder(
+EXPORTED int PRE jsScanSystemSetScanSyncEncoder(
+  jsScanSystem scan_system,
+  uint32_t serial_main,
+  uint32_t serial_aux1,
+  uint32_t serial_aux2) POST;
+
+/**
+ * @ingroup Configuration 
+ * @brief Obtains the ScanSync assigned to an encoder index.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @param index Encoder index of ScanSync to obtain.
+ * @param serial_main Pointer to be populated with ScanSync Main serial number.
+ * @param serial_aux1 Pointer to be populated with ScanSync Aux1 serial number.
+ * @param serial_aux2 Pointer to be populated with ScanSync Aux2 serial number.
+ * @return `0` on success, negative value `jsError` on error.
+ */
+EXPORTED int PRE jsScanSystemGetScanSyncEncoder(
+  jsScanSystem scan_system,
+  uint32_t *serial_main,
+  uint32_t *serial_aux1,
+  uint32_t *serial_aux2) POST;
+
+/**
+ * @ingroup Configuration 
+ * @brief Obtains the status of a given ScanSync.
+ *
+ * @param scan_system Reference to system of scan heads.
+ * @param serial Serial number of the ScanSync.
+ * @param status Pointer to be populated with the ScanSync status.
+ * @return `0` on success, negative value `jsError` on error.
+ */
+EXPORTED int PRE jsScanSystemGetScanSyncStatus(
+  jsScanSystem scan_system,
+  uint32_t serial,
+  jsScanSyncStatus *status) POST;
+
+/**
+ * @ingroup Miscellaneous 
+ * @deprecated Will be removed in a future release. Use
+ * `jsScanSystemGetScanSyncStatus` instead.
+ *
+ * @return `JS_ERROR_DEPRECATED`.
+ */
+DEPRECATED EXPORTED int PRE jsScanSystemGetEncoder(
   jsScanSystem scan_system,
   jsEncoder encoder,
   int64_t *value) POST;
 
 /**
+ * @ingroup Connecting 
  * @brief Creates a `jsScanHead` object representing a physical scan head
  * within the system.
  *
@@ -851,6 +1080,7 @@ EXPORTED jsScanHead PRE jsScanSystemCreateScanHead(
   uint32_t id) POST;
 
 /**
+ * @ingroup Miscellaneous 
  * @brief Obtains a reference to an existing `jsScanHead` object.
  *
  * @param scan_system Reference to system that owns the scan head.
@@ -875,6 +1105,7 @@ EXPORTED jsScanHead PRE jsScanSystemGetScanHeadBySerial(
   uint32_t serial) POST;
 
 /**
+ * @ingroup Connecting 
  * @brief Returns the total number of scan heads within a given system. This
  * should equal the number of times `jsScanSystemCreateScanHead()` was
  * successfully called with a new serial number.
@@ -887,6 +1118,7 @@ EXPORTED int32_t PRE jsScanSystemGetNumberScanHeads(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Connecting 
  * @brief Attempts to connect to all scan heads within the system.
  *
  * @param scan_system Reference to system owning scan heads to connect to.
@@ -899,6 +1131,7 @@ EXPORTED int32_t PRE jsScanSystemConnect(
   int32_t timeout_s) POST;
 
 /**
+ * @ingroup Connecting 
  * @brief Disconnects all scan heads from a given system.
  *
  * @param scan_system Reference to system of scan heads.
@@ -908,6 +1141,7 @@ EXPORTED int32_t PRE jsScanSystemDisconnect(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Connecting 
  * @brief Gets connected state for a scan system.
  *
  * @note A scan system is said to be connected if all of the scan heads
@@ -920,6 +1154,7 @@ EXPORTED bool PRE jsScanSystemIsConnected(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Clears all phases created for a given scan system previously made
  * through `jsScanSystemPhaseCreate`.
  *
@@ -930,6 +1165,7 @@ EXPORTED int32_t PRE jsScanSystemPhaseClearAll(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Creates a new phase entry for the scan system. If no phases have been
  * created for the scan system it will create the first phase entry. If entries
  * have been created already through previous calls to `jsScanSystemPhaseCreate`
@@ -942,9 +1178,10 @@ EXPORTED int32_t PRE jsScanSystemPhaseCreate(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Inserts a scan head and it's camera into a given phase entry.
- * Multiple scan heads may be inserted into a given phase entry. However, the
- * the total phase time for this paticular entry will be constrained by the
+ * Multiple scan heads may be inserted into a given phase entry. However,
+ * the total phase time for this particular entry will be constrained by the
  * scan head that requires the most time to complete it's scan.
  *
  * @note This function should be used with scan heads that are camera driven.
@@ -960,9 +1197,10 @@ EXPORTED int32_t PRE jsScanSystemPhaseInsertCamera(
   jsCamera camera) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Inserts a scan head and it's camera into a given phase entry.
- * Multiple scan heads may be inserted into a given phase entry. However, the
- * the total phase time for this paticular entry will be constrained by the
+ * Multiple scan heads may be inserted into a given phase entry. However,
+ * the total phase time for this particular entry will be constrained by the
  * scan head that requires the most time to complete it's scan.
  *
  * @note This function should be used with scan heads that are laser driven.
@@ -978,9 +1216,10 @@ EXPORTED int32_t PRE jsScanSystemPhaseInsertLaser(
   jsLaser laser) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Inserts a scan head and it's camera into a given phase entry.
- * Multiple scan heads may be inserted into a given phase entry. However, the
- * the total phase time for this paticular entry will be constrained by the
+ * Multiple scan heads may be inserted into a given phase entry. However,
+ * the total phase time for this particular entry will be constrained by the
  * scan head that requires the most time to complete it's scan.
  *
  * @note This function will use the `jsScanHeadConfiguration` provided as a
@@ -1006,9 +1245,10 @@ EXPORTED int32_t PRE jsScanSystemPhaseInsertConfigurationCamera(
   jsCamera camera) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Inserts a scan head and it's laser into a given phase entry.
- * Multiple scan heads may be inserted into a given phase entry. However, the
- * the total phase time for this paticular entry will be constrained by the
+ * Multiple scan heads may be inserted into a given phase entry. However,
+ * the total phase time for this particular entry will be constrained by the
  * scan head that requires the most time to complete it's scan.
  *
  * @note This function will use the `jsScanHeadConfiguration` provided as a
@@ -1034,28 +1274,31 @@ EXPORTED int32_t PRE jsScanSystemPhaseInsertConfigurationLaser(
   jsLaser laser) POST;
 
 /**
+ * @ingroup Configuration 
  * @deprecated Use `jsScanSystemPhaseInsertConfigurationCamera`.
  *
  * @return `JS_ERROR_INVALID_ARGUMENT`
  */
-EXPORTED int32_t PRE jsScanSystemPhaseInsertCameraConfiguration(
+DEPRECATED EXPORTED int32_t PRE jsScanSystemPhaseInsertCameraConfiguration(
   jsScanSystem scan_system,
   jsScanHead scan_head,
   jsCamera camera,
   jsScanHeadConfiguration cfg) POST;
 
 /**
+ * @ingroup Configuration 
  * @deprecated Use `jsScanSystemPhaseInsertConfigurationLaser`.
  *
  * @return `JS_ERROR_INVALID_ARGUMENT`
  */
-EXPORTED int32_t PRE jsScanSystemPhaseInsertLaserConfiguration(
+DEPRECATED EXPORTED int32_t PRE jsScanSystemPhaseInsertLaserConfiguration(
   jsScanSystem scan_system,
   jsScanHead scan_head,
   jsLaser laser,
   jsScanHeadConfiguration cfg) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Obtains the minimum period that a given scan system can achieve
  * scanning when `jsScanSystemStartScanning` is called.
  *
@@ -1068,6 +1311,7 @@ jsScanSystemGetMinScanPeriod(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Prepares the scan system to begin scanning. If connected, this
  * function will send all of the necessary configuration data to all of the
  * scan heads. Provided that no changes are made to any of the scan heads
@@ -1083,6 +1327,7 @@ EXPORTED int32_t PRE jsScanSystemConfigure(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Obtains the configuration state of the scan system. If `false`, the
  * scan system needs to be configured by calling `jsScanSystemConfigure` or it
  * will be sent during `jsScanSystemStartScanning` call, incurring a time
@@ -1096,6 +1341,7 @@ EXPORTED bool PRE jsScanSystemIsConfigured(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Commands scan heads in system to begin scanning, returning geometry
  * and/or brightness values to the client.
  *
@@ -1114,6 +1360,7 @@ EXPORTED int32_t PRE jsScanSystemStartScanning(
   jsDataFormat fmt) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Commands scan heads in system to stop scanning.
  *
  * @param scan_system Reference to system of scan heads.
@@ -1123,6 +1370,7 @@ EXPORTED int32_t PRE jsScanSystemStopScanning(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Commands scan heads in system to begin scanning, returning geometry
  * and/or brightness values to the client in an organized frame of profiles,
  * with each frame being comprised of one cycle through the phase table
@@ -1139,6 +1387,7 @@ EXPORTED int32_t PRE jsScanSystemStartFrameScanning(
   jsDataFormat fmt) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Returns the number of profiles comprising a single frame of scan data.
  * This number should be used to appropriately size the arrays used to call
  * `jsScanSystemGetProfileFrame` and `jsScanSystemGetRawProfileFrame`.
@@ -1151,6 +1400,7 @@ EXPORTED int32_t PRE jsScanSystemGetProfilesPerFrame(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Blocks until a frame of scan data is available to be read.
  *
  * @param scan_system Reference to system of scan heads.
@@ -1164,6 +1414,7 @@ EXPORTED int32_t PRE jsScanSystemWaitUntilFrameAvailable(
   uint32_t timeout_us) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Checks if enough data has been collected to construct a frame of
  * profile data.
  *
@@ -1174,6 +1425,7 @@ EXPORTED bool PRE jsScanSystemIsFrameAvailable(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Empties the internal client side software buffers used to store
  * profiles for frame scanning.
  *
@@ -1190,12 +1442,13 @@ EXPORTED int32_t PRE jsScanSystemClearFrames(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Reads one frame of `jsProfile` formatted profile data.
  *
  * @note If no frame is available this will return immediately.  Care should
  * be taken if this function is used in a loop; it is advised to either sleep
  * when `0` profiles are returned, or first call
- * `jsScanHeadWaitUntilFrameAvailable()` before `jsScanSystemGetProfileFrame()`
+ * `jsScanSystemWaitUntilFrameAvailable()` before `jsScanSystemGetProfileFrame()`
  * so as to avoid excessive CPU usage.
  *
  * @param scan_head Reference to scan head.
@@ -1211,12 +1464,13 @@ EXPORTED int32_t PRE jsScanSystemGetFrame(
   jsProfile *profiles) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Reads one frame of `jsRawProfile` formatted profile data.
  *
  * @note If no frame is available this will return immediately.  Care should
  * be taken if this function is used in a loop; it is advised to either sleep
  * when `0` profiles are returned, or first call
- * `jsScanHeadWaitUntilFrameAvailable()` before `jsScanSystemGetProfileFrame()`
+ * `jsScanSystemWaitUntilFrameAvailable()` before `jsScanSystemGetProfileFrame()`
  * so as to avoid excessive CPU usage.
  *
  * @param scan_head Reference to scan head.
@@ -1232,6 +1486,7 @@ EXPORTED int32_t PRE jsScanSystemGetRawFrame(
   jsRawProfile *profiles) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Gets scanning state for a scan system.
  *
  * @param scan_system Reference to system of scan heads.
@@ -1241,6 +1496,7 @@ EXPORTED bool PRE jsScanSystemIsScanning(
   jsScanSystem scan_system) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Obtains the product type of a given scan head.
  *
  * @note This function can only be called when a scan head is successfully
@@ -1253,6 +1509,7 @@ EXPORTED jsScanHeadType PRE jsScanHeadGetType(
   jsScanHead scan_head) POST;
 
 /**
+ * @ingroup Miscellaneous 
  * @brief Obtains the ID of the scan head.
  *
  * @param scan_head Reference to scan head.
@@ -1262,6 +1519,7 @@ EXPORTED uint32_t PRE jsScanHeadGetId(
   jsScanHead scan_head) POST;
 
 /**
+ * @ingroup Miscellaneous 
  * @brief Obtains the serial number of the scan head.
  *
  * @param scan_head Reference to scan head.
@@ -1271,6 +1529,7 @@ EXPORTED uint32_t PRE jsScanHeadGetSerial(
   jsScanHead scan_head) POST;
 
 /**
+ * @ingroup Miscellaneous 
  * @brief Obtains the capabilities for a given scan head.
  *
  * @param type The scan head product type to obtain capabilities for.
@@ -1282,6 +1541,7 @@ EXPORTED int32_t PRE jsScanHeadGetCapabilities(
   jsScanHeadCapabilities *capabilities) POST;
 
 /**
+ * @ingroup Miscellaneous 
  * @brief Obtains the firmware version of the scan head presented as unsigned
  * integer values.
  *
@@ -1297,6 +1557,7 @@ EXPORTED int32_t PRE jsScanHeadGetFirmwareVersion(
   uint32_t *patch) POST;
 
 /**
+ * @ingroup Connecting 
  * @brief Obtains the connection state of a given scan head.
  *
  * @param scan_head Reference to scan head.
@@ -1306,6 +1567,7 @@ EXPORTED bool PRE jsScanHeadIsConnected(
   jsScanHead scan_head) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Configures the scan head according to the parameters specified.
  *
  * @note The configuration settings are sent to the scan head during the call
@@ -1320,6 +1582,7 @@ EXPORTED int32_t PRE jsScanHeadSetConfiguration(
   jsScanHeadConfiguration *cfg) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the scan head's configuration settings configured by the
  * `jsScanHeadConfiguration` function.
  *
@@ -1332,6 +1595,7 @@ EXPORTED int32_t PRE jsScanHeadGetConfiguration(
   jsScanHeadConfiguration *cfg) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the safe default configuration for a given scan head.
  *
  * @param scan_head Reference to scan head to be configured.
@@ -1343,10 +1607,11 @@ EXPORTED int32_t PRE jsScanHeadGetConfigurationDefault(
   jsScanHeadConfiguration *cfg) POST;
 
 /**
- * @brief Gets the safe default configuration for a given scan head.
+ * @ingroup Configuration 
+ * @brief Sets the cable orientation for a given scan head.
  *
  * @param scan_head Reference to scan head to be configured.
- * @param cfg The `jsScanHeadConfiguration` to be updated with default.
+ * @param cable_orientation The `jsCableOrientation` to be applied.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
 EXPORTED int32_t PRE jsScanHeadSetCableOrientation(
@@ -1354,10 +1619,12 @@ EXPORTED int32_t PRE jsScanHeadSetCableOrientation(
   jsCableOrientation cable_orientation);
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the safe default configuration for a given scan head.
  *
  * @param scan_head Reference to scan head to be configured.
- * @param cfg The `jsScanHeadConfiguration` to be updated with default.
+ * @param cable_orientation The `jsCableOrientation` to be updated with
+ * the current orientation.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
 EXPORTED int32_t PRE jsScanHeadGetCableOrientation(
@@ -1365,6 +1632,7 @@ EXPORTED int32_t PRE jsScanHeadGetCableOrientation(
   jsCableOrientation *cable_orientation);
 
 /**
+ * @ingroup Configuration 
  * @brief Configures spatial parameters of the scan head in order to properly
  * transform the data from a camera based coordinate system to one based on
  * mill placement.
@@ -1385,6 +1653,7 @@ EXPORTED int32_t PRE jsScanHeadSetAlignment(
   double shift_y) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Configures spatial parameters of the scan head in order to properly
  * transform the data from a camera based coordinate system to one based on
  * mill placement. This function is similar to `jsScanHeadSetAlignment`
@@ -1408,6 +1677,7 @@ EXPORTED int32_t PRE jsScanHeadSetAlignmentCamera(
   double shift_y) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Obtains the currently applied alignment settings.
  *
  * @note If configured using `jsScanHeadSetAlignment`, each camera will have
@@ -1428,6 +1698,7 @@ EXPORTED int32_t PRE jsScanHeadGetAlignmentCamera(
   double *shift_y) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Configures spatial parameters of the scan head in order to properly
  * transform the data from a camera based coordinate system to one based on
  * mill placement. This function is similar to `jsScanHeadSetAlignment`
@@ -1451,6 +1722,7 @@ EXPORTED int32_t PRE jsScanHeadSetAlignmentLaser(
   double shift_y) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Obtains the currently applied alignment settings.
  *
  * @note If configured using `jsScanHeadSetAlignment`, each laser will have
@@ -1471,6 +1743,7 @@ EXPORTED int32_t PRE jsScanHeadGetAlignmentLaser(
   double *shift_y) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Allows specific pixels to be masked from scanning. This is useful to
  * help exclude regions in the field of view that generate spurious data due to
  * competing light sources. In order to exclude a given pixel, set the
@@ -1489,6 +1762,7 @@ EXPORTED int32_t PRE jsScanHeadSetExclusionMaskCamera(
   jsExclusionMask *mask) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Allows specific pixels to be masked from scanning. This is useful to
  * help exclude regions in the field of view that generate spurious data due to
  * competing light sources. In order to exclude a given pixel, set the
@@ -1507,6 +1781,7 @@ EXPORTED int32_t PRE jsScanHeadSetExclusionMaskLaser(
   jsExclusionMask *mask) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the current exclusion mask applied.
  *
  * @param scan_head Reference to scan head.
@@ -1520,6 +1795,7 @@ EXPORTED int32_t PRE jsScanHeadGetExclusionMaskCamera(
   jsExclusionMask *mask) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the current exclusion mask applied.
  *
  * @param scan_head Reference to scan head.
@@ -1533,6 +1809,7 @@ EXPORTED int32_t PRE jsScanHeadGetExclusionMaskLaser(
   jsExclusionMask *mask) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Allows adjusting the scan data's brightness values. This can be
  * useful to help ensure uniformity across all columns of the scan data.
  *
@@ -1546,7 +1823,7 @@ EXPORTED int32_t PRE jsScanHeadGetExclusionMaskLaser(
  * @note Only supported by JS-50 scan heads running v16.1.0 firmware or greater.
  *
  * @param scan_head Reference to scan head.
- * @param camera The camera to apply exclusion mask to.
+ * @param camera The camera to apply brightness correction to.
  * @param correction Pointer to brightness correction to apply.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
@@ -1556,11 +1833,12 @@ EXPORTED int32_t PRE jsScanHeadSetBrightnessCorrectionCamera_BETA(
   jsBrightnessCorrection_BETA *correction) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Allows adjusting the scan data's brightness values. This can be
  * useful to help ensure uniformity across all columns of the scan data.
  *
  * @note This is a beta feature that may be changed in the future. It is
- * is offered here to provide access to functionality that may prove useful to
+ * offered here to provide access to functionality that may prove useful to
  * end users and allow them to submit feedback back to JoeScan. In a future
  * release, this code may change; care should be taken when adding to
  * applications. For any questions, reach out to a JoeScan representative for
@@ -1569,7 +1847,7 @@ EXPORTED int32_t PRE jsScanHeadSetBrightnessCorrectionCamera_BETA(
  * @note Only supported by JS-50 scan heads running v16.1.0 firmware or greater.
  *
  * @param scan_head Reference to scan head.
- * @param laser The laser to apply exclusion mask to.
+ * @param laser The laser to apply brightness correction to.
  * @param correction Pointer to brightness correction to apply.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
@@ -1579,10 +1857,11 @@ EXPORTED int32_t PRE jsScanHeadSetBrightnessCorrectionLaser_BETA(
   jsBrightnessCorrection_BETA *correction) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the current brightness correction values applied.
  *
  * @note This is a beta feature that may be changed in the future. It is
- * is offered here to provide access to functionality that may prove useful to
+ * offered here to provide access to functionality that may prove useful to
  * end users and allow them to submit feedback back to JoeScan. In a future
  * release, this code may change; care should be taken when adding to
  * applications. For any questions, reach out to a JoeScan representative for
@@ -1599,10 +1878,11 @@ EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionCamera_BETA(
   jsBrightnessCorrection_BETA *correction) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Gets the current brightness correction values applied.
  *
  * @note This is a beta feature that may be changed in the future. It is
- * is offered here to provide access to functionality that may prove useful to
+ * offered here to provide access to functionality that may prove useful to
  * end users and allow them to submit feedback back to JoeScan. In a future
  * release, this code may change; care should be taken when adding to
  * applications. For any questions, reach out to a JoeScan representative for
@@ -1619,11 +1899,11 @@ EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionLaser_BETA(
   jsBrightnessCorrection_BETA *correction) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Configures the scan head to only return a profile after the specified
  * number of ticks have occurred on `JS_ENCODER_MAIN`.
- *
- * @note Setting this value to zero, the default, will result in profiles
- * always being returned irregardless of the encoder travel.
+ * 
+ * @deprecated Will be removed in a future release.
  *
  * @note Use `jsScanHeadSetIdleScanPeriod` to configure the scan head to return
  * profiles at a reduced rate when the encoder has not traveled enough to
@@ -1635,13 +1915,16 @@ EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionLaser_BETA(
  * @param min_encoder_travel Number of encoder ticks needed for new profile.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadSetMinimumEncoderTravel(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadSetMinimumEncoderTravel(
   jsScanHead scan_head,
   uint32_t min_encoder_travel);
 
 /**
+ * @ingroup Configuration
  * @brief Returns the configured encoder travel value set by
  * `jsScanHeadSetMinimumEncoderTravel`.
+ * 
+ * @deprecated Will be removed in a future release.
  *
  * @note This feature is currently not supported with frame scanning.
  *
@@ -1649,12 +1932,69 @@ EXPORTED int32_t PRE jsScanHeadSetMinimumEncoderTravel(
  * @param min_encoder_travel Pointer to store configured travel value.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadGetMinimumEncoderTravel(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadGetMinimumEncoderTravel(
   jsScanHead scan_head,
   uint32_t *min_encoder_travel);
 
 /**
- * @brief Gonfigures the duration by which new profiles are returned to the
+ * @ingroup Configuration
+ * @brief Configures the period for the scan system when there is no encoder
+ * travel. If the idle scan period is set to 0 the laser will be completely
+ * disabled and no profiles will be received by the API when in the idle state.
+ * 
+ * @note Use `jsScanSystemIsIdleScanningEnabled` and `jsScanHeadGetStatus`
+ * (via status->state) to determine if profiles are not being generated due to
+ * the scan head being in an idle state
+ * 
+ * @note The idle scan period will be aligned to a multiple of the scan 
+ * system's scan period. This means that the idle scan period may slightly
+ * differ from `idle_period_us` passed into this function (but never by more 
+ * than a scan period).
+ * 
+ * @param scan_system Reference to scan system.
+ * @param idle_period_us The idle scan period in microseconds
+ * @return `0` on success, negative value mapping to `jsError` on error.
+*/
+EXPORTED int32_t PRE jsScanSystemSetIdleScanPeriod(
+  jsScanSystem scan_system,
+  uint32_t idle_period_us) POST;
+
+/**
+ * @ingroup Configuration
+ * @brief Returns the idle scan period set by `jsScanSystemSetIdleScanPeriod`.
+ * 
+ * @param scan_system Reference to scan system.
+ * @param idle_period_us Pointer to store configured idle period value.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+*/
+EXPORTED int32_t PRE jsScanSystemGetIdleScanPeriod(
+  jsScanSystem scan_system,
+  uint32_t *idle_period_us) POST;
+
+/**
+ * @brief Disable idle scanning for the scan system.
+ * 
+ * @param scan_system Reference to scan system.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+*/
+EXPORTED int32_t PRE jsScanSystemDisableIdleScanning(jsScanSystem scan_system);
+
+/**
+ * @ingroup Configuration
+ * @brief Gets whether idle scanning is enabled for the scan system.
+ * 
+ * @note Idle scanning is disabled by default, but can be enabled by setting
+ * the idle scan period using `jsScanSystemSetIdleScanPeriod`.
+ * 
+ * @param scan_system Reference to scan system.
+ * 
+ * @return Boolean `true` if idle scanning is enabled, `false` otherwise.
+*/
+EXPORTED bool PRE jsScanSystemIsIdleScanningEnabled(jsScanSystem scan_system);
+
+/**
+ * @ingroup Configuration
+ * @brief Configures the duration by which new profiles are returned to the
  * user when the encoder travel value specified by
  * `jsScanHeadSetMinimumEncoderTravel` has not been met.
  *
@@ -1667,29 +2007,71 @@ EXPORTED int32_t PRE jsScanHeadGetMinimumEncoderTravel(
  * future release.
  *
  * @note This feature is currently not supported with frame scanning.
+ * 
+ * @deprecated Use `jsScanSystemSetIdleScanPeriod`.
  *
  * @param scan_head Reference to scan head.
  * @param idle_period_us The idle scan period in microseconds
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadSetIdleScanPeriod(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadSetIdleScanPeriod(
   jsScanHead scan_head,
   uint32_t idle_period_us);
 
 /**
+ * @ingroup Configuration
  * @brief Returns the configured duration set by `jsScanHeadSetIdleScanPeriod`.
  *
  * @note This feature is currently not supported with frame scanning.
+ * 
+ * @deprecated Use `jsScanSystemGetIdleScanPeriod`.
  *
  * @param scan_head Reference to scan head.
  * @param idle_period_us Pointer to store configured idle period value.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadGetIdleScanPeriod(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadGetIdleScanPeriod(
   jsScanHead scan_head,
   uint32_t *idle_period_us);
 
 /**
+ * @ingroup Configuration
+ * @brief Resets the scan windows for a scan head to be the full field of view.
+ *
+ * @param scan_head Reference to scan head.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetWindowUnconstrained(
+  jsScanHead scan_head) POST;
+
+/**
+ * @ingroup Configuration
+ * @brief Resets the scan window for a particular scan head's camera to be 
+ * the full field of view.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to apply the window to.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetWindowUnconstrainedCamera(
+  jsScanHead scan_head,
+  jsCamera camera) POST;
+
+/**
+ * @ingroup Configuration
+ * @brief Resets the scan window for a particular scan head's laser to be
+ * the full field of view.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to apply the window to.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadSetWindowUnconstrainedLaser(
+  jsScanHead scan_head,
+  jsLaser laser) POST;
+
+/**
+ * @ingroup Configuration
  * @brief Sets a rectangular scan window for a scan head to restrict its
  * field of view when scanning.
  *
@@ -1708,6 +2090,7 @@ EXPORTED int32_t PRE jsScanHeadSetWindowRectangular(
   double window_right) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Sets a rectangular scan window for a particular scan head's camera to
  * restrict its field of view when scanning.
  *
@@ -1728,6 +2111,7 @@ EXPORTED int32_t PRE jsScanHeadSetWindowRectangularCamera(
   double window_right) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Sets a rectangular scan window for a particular scan head's laser to
  * restrict its field of view when scanning.
  *
@@ -1748,6 +2132,7 @@ EXPORTED int32_t PRE jsScanHeadSetWindowRectangularLaser(
   double window_right) POST;
 
 /**
+ * @ingroup Configuration 
  * @brief Sets a user defined polygonal scan window for a scan head to restrict
  * its field of view when scanning. The points must be ordered in a clockwise
  * fashion and the resulting shape must be convex. The first and last points
@@ -1765,6 +2150,7 @@ EXPORTED int32_t PRE jsScanHeadSetPolygonWindow(
   uint32_t points_len);
 
 /**
+ * @ingroup Configuration 
  * @brief Sets a user defined polygonal scan window for a particular scan
  * head's camera to restrict its field of view when scanning. The points must
  * be ordered in a clockwise fashion and the resulting shape must be convex.
@@ -1784,6 +2170,7 @@ EXPORTED int32_t PRE jsScanHeadSetPolygonWindowCamera(
   uint32_t points_len);
 
 /**
+ * @ingroup Configuration 
  * @brief Sets a user defined polygonal scan window for a particular scan
  * head's laser to restrict its field of view when scanning. The points must
  * be ordered in a clockwise fashion and the resulting shape must be convex.
@@ -1803,6 +2190,101 @@ EXPORTED int32_t PRE jsScanHeadSetPolygonWindowLaser(
   uint32_t points_len);
 
 /**
+ * @ingroup Configuration 
+ * @brief Gets the current scan window type for a particular scan head's camera.
+ * 
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to get the window type for.
+ * @param window_type The `jsScanWindowType` to be updated with the current
+ * window type.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetWindowTypeCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsScanWindowType *window_type);
+
+/**
+ * @ingroup Configuration 
+ * @brief Gets the current scan window type for a particular scan head's laser.
+ * 
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to get the window type for.
+ * @param window_type The `jsScanWindowType` to be updated with the current
+ * window type.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetWindowTypeLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsScanWindowType *window_type);
+
+/**
+ * @ingroup Configuration 
+ * @brief Gets the number of points that defines the scan window for a 
+ * scan head's specified camera.
+ * 
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to get the number of window points from.
+ * @return The number of points defining the window on success, negative 
+ * value mapping to `jsError` on error.
+*/
+EXPORTED int32_t PRE jsScanHeadGetNumberWindowPointsCamera(
+  jsScanHead scan_head,
+  jsCamera camera) POST;
+
+/**
+ * @ingroup Configuration 
+ * @brief Gets the number of points that defines the scan window for a 
+ * scan head's specified laser.
+ * 
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to get the number of window points from.
+ * @return The number of points defining the window on success, negative value
+ * mapping to `jsError` on error.
+*/
+EXPORTED int32_t PRE jsScanHeadGetNumberWindowPointsLaser(
+  jsScanHead scan_head,
+  jsLaser laser) POST;
+
+/**
+ * @ingroup Configuration 
+ * @brief Gets the scan window for a particular scan head's camera. For 
+ * rectangular windows the returned points will be ordered starting with the 
+ * top left corner proceeding clockwise. For polygonal windows the points will 
+ * be in the same order as they were supplied when setting the window.
+ *
+ * @param scan_head Reference to scan head.
+ * @param camera The camera to get the window from.
+ * @param points Array to store the coordinates defining the X/Y points 
+ * of the window.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetWindowCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsCoordinate *points);
+
+/**
+ * @ingroup Configuration 
+ * @brief Gets the scan window for a particular scan head's laser. For 
+ * rectangular windows the returned points will be ordered starting with the 
+ * top left corner proceeding clockwise. For polygonal windows the points will 
+ * be in the same order as they were supplied when setting the window.
+ *
+ * @param scan_head Reference to scan head.
+ * @param laser The laser to get the window from.
+ * @param points Array to store the coordinates defining the X/Y points 
+ * of the window.
+ * @return `0` on success, negative value mapping to `jsError` on error.
+ */
+EXPORTED int32_t PRE jsScanHeadGetWindowLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsCoordinate *points);
+
+/**
+ * @ingroup Miscellaneous 
  * @brief Reads the last reported status update from a scan head.
  *
  * @param scan_head Reference to scan head.
@@ -1814,6 +2296,7 @@ EXPORTED int32_t PRE jsScanHeadGetStatus(
   jsScanHeadStatus *status) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Obtains the number of profiles currently available to be read out from
  * a given scan head.
  *
@@ -1825,7 +2308,8 @@ EXPORTED int32_t PRE jsScanHeadGetProfilesAvailable(
   jsScanHead scan_head) POST;
 
 /**
- * @brief Blocks until the number of requested profiles are avilable to be read
+ * @ingroup Scanning 
+ * @brief Blocks until the number of requested profiles are available to be read
  * out from a given scan head.
  *
  * @param scan_head Reference to scan head.
@@ -1842,6 +2326,7 @@ EXPORTED int32_t PRE jsScanHeadWaitUntilProfilesAvailable(
   uint32_t timeout_us) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Empties the internal client side software buffers used to store
  * profiles received from a given scan head.
  *
@@ -1859,6 +2344,7 @@ EXPORTED int32_t PRE jsScanHeadClearProfiles(
   jsScanHead scan_head) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Reads `jsProfile` formatted profile data from a given scan head.
  * The number of profiles returned is either the max value requested or the
  * total number of profiles ready to be read out, whichever is less.
@@ -1884,6 +2370,7 @@ EXPORTED int32_t PRE jsScanHeadGetProfiles(
   uint32_t max_profiles) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Reads `jsRawProfile` formatted profile data from a given scan head.
  * The number of profiles returned is either the max value requested or the
  * total number of profiles ready to be read out, whichever is less.
@@ -1903,6 +2390,7 @@ EXPORTED int32_t PRE jsScanHeadGetRawProfiles(
   uint32_t max_profiles) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Obtains a single camera profile from a scan head to be used for
  * diagnostic purposes.
  *
@@ -1936,6 +2424,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticProfileCamera(
   jsRawProfile *profile) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Obtains a single camera profile from a scan head to be used for
  * diagnostic purposes.
  *
@@ -1969,6 +2458,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticProfileLaser(
   jsRawProfile *profile) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Obtains a single camera image from a scan head to be used for
  * diagnostic purposes.
  *
@@ -1990,7 +2480,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticProfileLaser(
  * @param image Pointer to memory to store camera image data.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageCamera(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageCamera(
   jsScanHead scan_head,
   jsCamera camera,
   jsDiagnosticMode mode,
@@ -1999,6 +2489,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageCamera(
   jsCameraImage *image) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Obtains a single camera image from a scan head to be used for
  * diagnostic purposes.
  *
@@ -2020,7 +2511,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageCamera(
  * @param image Pointer to memory to store camera image data.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageLaser(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageLaser(
   jsScanHead scan_head,
   jsLaser laser,
   jsDiagnosticMode mode,
@@ -2029,6 +2520,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageLaser(
   jsCameraImage *image) POST;
 
 /**
+ * @ingroup Scanning 
  * @brief Obtains a single camera image from a scan head to be used for
  * diagnostic purposes.
  *
@@ -2047,7 +2539,7 @@ EXPORTED int32_t PRE jsScanHeadGetDiagnosticImageLaser(
  * @param image Pointer to memory to store camera image data.
  * @return `0` on success, negative value mapping to `jsError` on error.
  */
-EXPORTED int32_t PRE jsScanHeadGetDiagnosticImage(
+DEPRECATED EXPORTED int32_t PRE jsScanHeadGetDiagnosticImage(
   jsScanHead scan_head,
   jsCamera camera,
   jsLaser laser,

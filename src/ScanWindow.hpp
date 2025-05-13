@@ -16,6 +16,12 @@ namespace joescan {
 class ScanWindow {
  public:
   /**
+   * Initializes an unconstrained scan window. Constraints are empty and
+   * the window dimensions are set to zero.
+  */
+  ScanWindow();
+
+  /**
    * Set the window at which a camera will look for the laser. Note the
    * `bottom` must not be greater than the `top` and the `left` must not be
    * greater than the `right`.
@@ -25,8 +31,7 @@ class ScanWindow {
    * @param left The left window dimension in scan system units.
    * @param right The right window dimension in scan system units.
    */
-  ScanWindow(double top = 30.0, double bottom = -30.0, double left = -30.0,
-             double right = 30.0);
+  ScanWindow(double top, double bottom, double left, double right);
 
   ScanWindow(std::vector<jsCoordinate> coordinates);
 
@@ -51,6 +56,8 @@ class ScanWindow {
 
   std::vector<jsCoordinate> GetCoordinates() const;
 
+  jsScanWindowType GetType() const;
+
   double GetTop() const;
   double GetBottom() const;
   double GetLeft() const;
@@ -64,6 +71,7 @@ class ScanWindow {
   double m_bottom;
   double m_left;
   double m_right;
+  jsScanWindowType m_type;
 };
 } // namespace joescan
 

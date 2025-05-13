@@ -6,18 +6,18 @@
  */
 
 #include "joescan_pinchot.h"
-#include "BroadcastDiscover.hpp"
 #include "FlatbufferMessages.hpp"
 #include "NetworkInterface.hpp"
 #include "ProfileQueue.hpp"
 #include "RawProfileToProfile.hpp"
 #include "ScanHead.hpp"
 #include "ScanManager.hpp"
-#include "ScanSync.hpp"
+#include "ScanSyncManager.hpp"
 #include "Version.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <cassert>
 #include <cstring>
@@ -25,13 +25,10 @@
 
 using namespace joescan;
 
-#define INVALID_DOUBLE(d) (std::isinf((d)) || std::isnan((d)))
-
 static std::map<uint32_t, ScanManager*> _uid_to_scan_manager;
-static ScanSync _scansync;
-// TODO: change this from a static local variable to being a member of
-// ScanSystem struct when we refactor.
-static bool _is_frame_scanning = false;
+// memory for storing extended error when user reads it out
+static std::string _last_error_extended_str;
+static ScanSyncManager _scansync;
 
 static ScanManager *_get_scan_manager_object(jsScanSystem scan_system)
 {
@@ -162,11 +159,68 @@ void jsGetError(int32_t return_code, const char **error_str)
       case (JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE):
         *error_str = "phase table not compatible with frame scanning";
         break;
+      case (JS_ERROR_PHASE_TABLE_EMPTY):
+        *error_str = "phase table empty";
+        break;
+      case (JS_ERROR_DEPRECATED):
+        *error_str = "deprecated feature";
+      case (JS_ERROR_INVALID_SCAN_SYSTEM):
+        *error_str = "invalid scan system reference";
+        break;
+      case (JS_ERROR_INVALID_SCAN_HEAD):
+        *error_str = "invalid scan head reference";
+        break;
       case (JS_ERROR_UNKNOWN):
       default:
         *error_str = "unknown error";
     }
   }
+}
+
+EXPORTED
+int32_t jsScanSystemGetLastErrorExtended(
+  jsScanSystem scan_system,
+  const char **error_extended_str)
+{
+  int r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    _last_error_extended_str = manager->GetErrorExtended();
+    *error_extended_str = _last_error_extended_str.c_str();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanHeadGetLastErrorExtended(
+  jsScanHead scan_head,
+  const char **error_extended_str)
+{
+  int r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    _last_error_extended_str = sh->GetErrorExtended();
+    *error_extended_str = _last_error_extended_str.c_str();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
 }
 
 EXPORTED
@@ -200,15 +254,37 @@ int32_t jsPowerCycleScanHead(uint32_t serial_number)
 {
   constexpr uint16_t kUpdatePort = 21232;
   std::unique_ptr<TCPSocket> tcp;
+  int32_t r = 0;
 
   try {
-    // First check if the head can be discovered.
-    std::map<uint32_t, std::shared_ptr<jsDiscovered>> serial_to_discovered;
-    int r = BroadcastDiscover(serial_to_discovered);
-    if (serial_to_discovered.find(serial_number) ==
-        serial_to_discovered.end()) {
+    std::unique_ptr<ScanManager> manager(
+      new ScanManager(JS_UNITS_INCHES, &_scansync));
+    r = manager->Discover();
+    if (0 > r) {
+      return r;
+    } else if (0 == r) {
+      return JS_ERROR_NOT_DISCOVERED;
+    }
+
+    std::vector<jsDiscovered> discovered;
+    discovered.resize(r);
+    r = manager->ScanHeadsDiscovered(&discovered[0], r);
+    if (0 > r) {
+      return r;
+    }
+
+    uint32_t idx = 0;
+    for (uint32_t n = 0; n < discovered.size(); n++) {
+      // First check if the head can be discovered.
+      if (discovered[n].serial_number == serial_number) {
+        break;
+      }
+      idx++;
+    }
+
+    if (discovered.size() == idx) {
       // Failed to find in BroadcastDiscover, try again using MDNS
-      uint32_t ip_addr = 0;
+      uint32_t ip_addr;
       r = NetworkInterface::ResolveIpAddressMDNS(serial_number, &ip_addr);
       if (0 != r) {
         return JS_ERROR_NOT_DISCOVERED;
@@ -218,12 +294,11 @@ int32_t jsPowerCycleScanHead(uint32_t serial_number)
       tcp = std::unique_ptr<TCPSocket>(
               new TCPSocket(ip_addr, kUpdatePort, 10));
     } else {
-      auto discovered = serial_to_discovered[serial_number];
       // Scan head was discovered and we know what network interface to use.
       tcp = std::unique_ptr<TCPSocket>(
-              new TCPSocket(discovered->client_name_str,
-                            discovered->client_ip_addr,
-                            discovered->ip_addr,
+              new TCPSocket(discovered[idx].client_name_str,
+                            discovered[idx].client_ip_addr,
+                            discovered[idx].ip_addr,
                             kUpdatePort,
                             10));
     }
@@ -240,6 +315,9 @@ int32_t jsPowerCycleScanHead(uint32_t serial_number)
     if (0 > r) {
       return r;
     }
+    // Delay here to ensure the non-blocking TCP write fully finishes before
+    // the TCPSocket class goes out of scope and is destroyed.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
   } catch (std::exception &e) {
     (void)e;
     return JS_ERROR_INTERNAL;
@@ -301,7 +379,7 @@ int jsScanSystemDiscover(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->Discover();
@@ -322,7 +400,7 @@ int jsScanSystemGetDiscovered(jsScanSystem scan_system,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->ScanHeadsDiscovered(results, max_results);
@@ -335,35 +413,118 @@ int jsScanSystemGetDiscovered(jsScanSystem scan_system,
 }
 
 EXPORTED
-int jsScanSystemGetEncoder(jsScanSystem scan_system, jsEncoder encoder,
-                           int64_t *value)
+int jsScanSystemScanSyncDiscover(
+  jsScanSystem scan_system)
 {
   int r = 0;
 
   try {
-    ScanManager *manager = _get_scan_manager_object(scan_system);
-    if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
-    if (JS_ENCODER_MAIN != encoder) {
-      // TODO: Change when we support multiple encoders
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
-    scansync_data data;
-    r = _scansync.GetData(&data);
-    if (0 != r) {
-      return r;
-    }
-
-    *value = data.encoder;
+    r = _scansync.GetDiscoveredSize();
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
   }
 
   return r;
+}
+
+EXPORTED
+int jsScanSystemGetScanSyncDiscovered(
+  jsScanSystem scan_system,
+  jsScanSyncDiscovered *results,
+  uint32_t max_results)
+{
+  int r = 0;
+
+  try {
+    auto discovered = _scansync.GetDiscovered();
+    for (uint32_t n = 0; (n < discovered.size()) && (n < max_results); n++) {
+      results[n] = discovered[n];
+    }
+    r = (int) discovered.size();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int jsScanSystemSetScanSyncEncoder(
+  jsScanSystem scan_system,
+  uint32_t serial_main,
+  uint32_t serial_aux1,
+  uint32_t serial_aux2)
+{
+  int r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    r = manager->SetScanSyncEncoder(serial_main,
+                                    serial_aux1,
+                                    serial_aux2);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int jsScanSystemGetScanSyncEncoder(
+  jsScanSystem scan_system,
+  uint32_t *serial_main,
+  uint32_t *serial_aux1,
+  uint32_t *serial_aux2)
+{
+  int r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    r = manager->GetScanSyncEncoder(serial_main,
+                                    serial_aux1,
+                                    serial_aux2);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int jsScanSystemGetScanSyncStatus(
+  jsScanSystem scan_system,
+  uint32_t serial,
+  jsScanSyncStatus *status)
+{
+  int r = 0;
+
+  try {
+    r = _scansync.GetStatus(serial, status);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int jsScanSystemGetEncoder(jsScanSystem scan_system, jsEncoder encoder,
+                           int64_t *value)
+{
+  return JS_ERROR_DEPRECATED;
 }
 
 EXPORTED
@@ -376,7 +537,7 @@ jsScanHead jsScanSystemCreateScanHead(jsScanSystem scan_system, uint32_t serial,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     if (true == manager->IsConnected()) {
@@ -406,7 +567,7 @@ jsScanHead jsScanSystemGetScanHeadById(jsScanSystem scan_system, uint32_t id)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     ScanHead *s = manager->GetScanHeadById(id);
@@ -432,7 +593,7 @@ jsScanHead jsScanSystemGetScanHeadBySerial(jsScanSystem scan_system,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     ScanHead *s = manager->GetScanHeadBySerial(serial);
@@ -457,7 +618,7 @@ int32_t jsScanSystemGetNumberScanHeads(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     uint32_t sz = manager->GetNumberScanners();
@@ -580,7 +741,7 @@ int32_t jsScanSystemConnect(jsScanSystem scan_system, int32_t timeout_s)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->Connect(timeout_s);
@@ -600,10 +761,10 @@ int32_t jsScanSystemDisconnect(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
-    manager->Disconnect();
+    r = manager->Disconnect();
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -640,22 +801,16 @@ int32_t jsScanSystemPhaseClearAll(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
-    PhaseTable *phase_table = manager->GetPhaseTable();
-
-    if (true == manager->IsScanning()) {
-      return JS_ERROR_SCANNING;
-    }
-
-    phase_table->Reset();
+    r = manager->PhaseClearAll();
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
   }
 
-  return 0;
+  return r;
 }
 
 EXPORTED
@@ -666,16 +821,10 @@ int32_t jsScanSystemPhaseCreate(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
-    PhaseTable *phase_table = manager->GetPhaseTable();
-
-    if (true == manager->IsScanning()) {
-      return JS_ERROR_SCANNING;
-    }
-
-    phase_table->CreatePhase();
+    r = manager->PhaseCreate();
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -693,21 +842,15 @@ int32_t jsScanSystemPhaseInsertCamera(jsScanSystem scan_system,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    PhaseTable *phase_table = manager->GetPhaseTable();
-
-    if (true == manager->IsScanning()) {
-      return JS_ERROR_SCANNING;
-    }
-
-    r = phase_table->AddToLastPhaseEntry(sh, camera);
+    r = manager->PhaseInsert(sh, camera);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -725,21 +868,15 @@ int32_t jsScanSystemPhaseInsertLaser(jsScanSystem scan_system,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    PhaseTable *phase_table = manager->GetPhaseTable();
-
-    if (true == manager->IsScanning()) {
-      return JS_ERROR_SCANNING;
-    }
-
-    r = phase_table->AddToLastPhaseEntry(sh, laser);
+    r = manager->PhaseInsert(sh, laser);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -759,21 +896,15 @@ int32_t jsScanSystemPhaseInsertConfigurationCamera(jsScanSystem scan_system,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    PhaseTable *phase_table = manager->GetPhaseTable();
-
-    if (true == manager->IsScanning()) {
-      return JS_ERROR_SCANNING;
-    }
-
-    r = phase_table->AddToLastPhaseEntry(sh, camera, cfg);
+    r = manager->PhaseInsert(sh, camera, cfg);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -793,21 +924,15 @@ int32_t jsScanSystemPhaseInsertConfigurationLaser(jsScanSystem scan_system,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    PhaseTable *phase_table = manager->GetPhaseTable();
-
-    if (true == manager->IsScanning()) {
-      return JS_ERROR_SCANNING;
-    }
-
-    r = phase_table->AddToLastPhaseEntry(sh, laser, cfg);
+    r = manager->PhaseInsert(sh, laser, cfg);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -822,7 +947,7 @@ int32_t jsScanSystemPhaseInsertCameraConfiguration(jsScanSystem scan_system,
                                                    jsCamera camera,
                                                    jsScanHeadConfiguration cfg)
 {
-  return JS_ERROR_INVALID_ARGUMENT;
+  return JS_ERROR_DEPRECATED;
 }
 
 EXPORTED
@@ -831,7 +956,7 @@ int32_t jsScanSystemPhaseInsertLaserConfiguration(jsScanSystem scan_system,
                                                   jsLaser laser,
                                                   jsScanHeadConfiguration cfg)
 {
-  return JS_ERROR_INVALID_ARGUMENT;
+  return JS_ERROR_DEPRECATED;
 }
 
 EXPORTED
@@ -842,7 +967,7 @@ int32_t jsScanSystemGetMinScanPeriod(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     if (!manager->IsConnected()) {
@@ -888,7 +1013,7 @@ int32_t jsScanSystemConfigure(
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->Configure();
@@ -909,7 +1034,7 @@ int32_t jsScanSystemStartScanning(jsScanSystem scan_system, uint32_t period_us,
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->StartScanning(period_us, fmt);
@@ -929,13 +1054,10 @@ int32_t jsScanSystemStopScanning(jsScanSystem scan_system)
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->StopScanning();
-    if (0 == r) {
-      _is_frame_scanning = false;
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -955,18 +1077,10 @@ int32_t jsScanSystemStartFrameScanning(
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
-    PhaseTable *phase_table = manager->GetPhaseTable();
-    if (phase_table->HasDuplicateElements()) {
-      return JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->StartScanning(period_us, fmt, true);
-    if (0 == r) {
-      _is_frame_scanning = true;
-    }
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -984,7 +1098,7 @@ int32_t jsScanSystemGetProfilesPerFrame(
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->GetProfilesPerFrame();
@@ -1004,13 +1118,9 @@ int32_t jsScanSystemWaitUntilFrameAvailable(
   int32_t r = 0;
 
   try {
-    if (!_is_frame_scanning) {
-      return JS_ERROR_NOT_FRAME_SCANNING;
-    }
-
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->WaitUntilFrameAvailable(timeout_us);
@@ -1027,10 +1137,6 @@ bool jsScanSystemIsFrameAvailable(
   jsScanSystem scan_system)
 {
   try {
-    if (!_is_frame_scanning) {
-      return false;
-    }
-
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr != manager) {
       int32_t r = manager->WaitUntilFrameAvailable(0);
@@ -1053,13 +1159,9 @@ int32_t jsScanSystemGetFrame(
   int32_t r = 0;
 
   try {
-    if (!_is_frame_scanning) {
-      return JS_ERROR_NOT_FRAME_SCANNING;
-    }
-
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->GetFrame(profiles);
@@ -1078,13 +1180,9 @@ int32_t jsScanSystemClearFrames(
   int32_t r = 0;
 
   try {
-    if (!_is_frame_scanning) {
-      return JS_ERROR_NOT_FRAME_SCANNING;
-    }
-
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->ClearFrames();
@@ -1106,7 +1204,7 @@ int32_t jsScanSystemGetRawFrame(
   try {
     ScanManager *manager = _get_scan_manager_object(scan_system);
     if (nullptr == manager) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
 
     r = manager->GetFrame(profiles);
@@ -1213,7 +1311,7 @@ int32_t jsScanHeadGetCapabilities(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     *capabilities = sh->GetCapabilities();
@@ -1234,7 +1332,7 @@ EXPORTED int32_t jsScanHeadGetFirmwareVersion(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     auto version = sh->GetFirmwareVersion();
@@ -1262,7 +1360,7 @@ int32_t jsScanHeadSetConfiguration(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetConfiguration(*cfg);
@@ -1287,7 +1385,7 @@ int32_t jsScanHeadGetConfiguration(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     *cfg = sh->GetConfiguration();
@@ -1312,7 +1410,7 @@ int32_t jsScanHeadGetConfigurationDefault(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     *cfg = sh->GetConfigurationDefault();
@@ -1333,7 +1431,7 @@ int32_t jsScanHeadSetCableOrientation(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetCableOrientation(cable);
@@ -1354,7 +1452,7 @@ int32_t jsScanHeadGetCableOrientation(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     *cable = sh->GetCableOrientation();
@@ -1373,14 +1471,9 @@ int32_t jsScanHeadSetAlignment(jsScanHead scan_head, double roll_degrees,
   int32_t r = 0;
 
   try {
-    if (INVALID_DOUBLE(roll_degrees) || INVALID_DOUBLE(shift_x) ||
-        INVALID_DOUBLE(shift_y)) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetAlignment(roll_degrees, shift_x, shift_y);
@@ -1400,14 +1493,9 @@ int32_t jsScanHeadSetAlignmentCamera(jsScanHead scan_head, jsCamera camera,
   int32_t r = 0;
 
   try {
-    if (INVALID_DOUBLE(roll_degrees) || INVALID_DOUBLE(shift_x) ||
-        INVALID_DOUBLE(shift_y)) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetAlignment(camera, roll_degrees, shift_x, shift_y);
@@ -1427,17 +1515,11 @@ int32_t jsScanHeadGetAlignmentCamera(jsScanHead scan_head, jsCamera camera,
   int32_t r = 0;
 
   try {
-    if ((nullptr == roll_degrees) || (nullptr == shift_x) ||
-        (nullptr == shift_y)) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    AlignmentParams alignment;
     r = sh->GetAlignment(camera, roll_degrees, shift_x, shift_y);
   } catch (std::exception &e) {
     (void)e;
@@ -1455,14 +1537,9 @@ int32_t jsScanHeadSetAlignmentLaser(jsScanHead scan_head, jsLaser laser,
   int32_t r = 0;
 
   try {
-    if (INVALID_DOUBLE(roll_degrees) || INVALID_DOUBLE(shift_x) ||
-               INVALID_DOUBLE(shift_y)) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetAlignment(laser, roll_degrees, shift_x, shift_y);
@@ -1482,17 +1559,11 @@ int32_t jsScanHeadGetAlignmentLaser(jsScanHead scan_head, jsLaser laser,
   int32_t r = 0;
 
   try {
-    if ((nullptr == roll_degrees) || (nullptr == shift_x) ||
-        (nullptr == shift_y)) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    AlignmentParams alignment;
     r = sh->GetAlignment(laser, roll_degrees, shift_x, shift_y);
   } catch (std::exception &e) {
     (void)e;
@@ -1510,13 +1581,9 @@ EXPORTED int32_t jsScanHeadSetExclusionMaskCamera(
   int32_t r = 0;
 
   try {
-    if (nullptr == mask) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetExclusionMask(camera, mask);
@@ -1536,13 +1603,9 @@ EXPORTED int32_t jsScanHeadSetExclusionMaskLaser(
   int32_t r = 0;
 
   try {
-    if (nullptr == mask) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetExclusionMask(laser, mask);
@@ -1562,13 +1625,9 @@ EXPORTED int32_t jsScanHeadGetExclusionMaskCamera(
   int32_t r = 0;
 
   try {
-    if (nullptr == mask) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->GetExclusionMask(camera, mask);
@@ -1588,13 +1647,9 @@ EXPORTED int32_t jsScanHeadGetExclusionMaskLaser(
   int32_t r = 0;
 
   try {
-    if (nullptr == mask) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->GetExclusionMask(laser, mask);
@@ -1614,13 +1669,9 @@ EXPORTED int32_t jsScanHeadSetBrightnessCorrectionCamera_BETA(
   int32_t r = 0;
 
   try {
-    if (nullptr == correction) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetBrightnessCorrection(camera, correction);
@@ -1640,13 +1691,9 @@ EXPORTED int32_t jsScanHeadSetBrightnessCorrectionLaser_BETA(
   int32_t r = 0;
 
   try {
-    if (nullptr == correction) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetBrightnessCorrection(laser, correction);
@@ -1666,13 +1713,9 @@ EXPORTED int32_t jsScanHeadGetBrightnessCorrectionCamera_BETA(
   int32_t r = 0;
 
   try {
-    if (nullptr == correction) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->GetBrightnessCorrection(camera, correction);
@@ -1692,13 +1735,9 @@ EXPORTED int32_t jsScanHeadGetBrightnessCorrectionLaser_BETA(
   int32_t r = 0;
 
   try {
-    if (nullptr == correction) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->GetBrightnessCorrection(laser, correction);
@@ -1719,7 +1758,7 @@ int32_t jsScanHeadSetMinimumEncoderTravel(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetMinimumEncoderTravel(min_encoder_travel);
@@ -1740,7 +1779,7 @@ int32_t jsScanHeadGetMinimumEncoderTravel(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     *min_encoder_travel = sh->GetMinimumEncoderTravel();
@@ -1752,6 +1791,88 @@ int32_t jsScanHeadGetMinimumEncoderTravel(jsScanHead scan_head,
   return r;
 }
 
+EXPORTED 
+int32_t jsScanSystemSetIdleScanPeriod(jsScanSystem scan_system,
+                                      uint32_t idle_period_us)
+{
+  int32_t r = 0;
+  
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    r = manager->SetIdleScanPeriod(idle_period_us);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemGetIdleScanPeriod(jsScanSystem scan_system,
+                                      uint32_t *idle_period_us)
+{
+  int32_t r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    *idle_period_us = manager->GetIdleScanPeriod();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanSystemDisableIdleScanning(jsScanSystem scan_system)
+{
+  int32_t r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    r = manager->DisableIdleScanning();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+bool jsScanSystemIsIdleScanningEnabled(jsScanSystem scan_system)
+{
+  bool is_enabled = false;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return false;
+    }
+
+    is_enabled = manager->IsIdleScanningEnabled();
+  } catch (std::exception &e) {
+    (void)e;
+    is_enabled = false;
+  }
+
+  return is_enabled;
+}
+
 EXPORTED
 int32_t jsScanHeadSetIdleScanPeriod(jsScanHead scan_head,
                                     uint32_t idle_period_us)
@@ -1761,7 +1882,7 @@ int32_t jsScanHeadSetIdleScanPeriod(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetIdleScanPeriod(idle_period_us);
@@ -1782,10 +1903,72 @@ int32_t jsScanHeadGetIdleScanPeriod(jsScanHead scan_head,
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     *idle_period_us = sh->GetIdleScanPeriod();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanHeadSetWindowUnconstrained(jsScanHead scan_head)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->SetWindowUnconstrained();
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanHeadSetWindowUnconstrainedCamera(jsScanHead scan_head,
+                                              jsCamera camera)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->SetWindowUnconstrained(camera);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int32_t jsScanHeadSetWindowUnconstrainedLaser(jsScanHead scan_head,
+                                             jsLaser laser)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->SetWindowUnconstrained(laser);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1802,18 +1985,15 @@ int32_t jsScanHeadSetWindowRectangular(jsScanHead scan_head, double window_top,
   int32_t r = 0;
 
   try {
-    if (INVALID_DOUBLE(window_top) || INVALID_DOUBLE(window_bottom) ||
-        INVALID_DOUBLE(window_left) || INVALID_DOUBLE(window_right)) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    ScanWindow window(window_top, window_bottom, window_left, window_right);
-    r = sh->SetWindow(window);
+    r = sh->SetWindow(window_top,
+                      window_bottom,
+                      window_left,
+                      window_right);
   } catch (std::range_error &e) {
     (void)e;
     r = JS_ERROR_INVALID_ARGUMENT;
@@ -1836,18 +2016,16 @@ EXPORTED int32_t jsScanHeadSetWindowRectangularCamera(
   int32_t r = 0;
 
   try {
-    if (INVALID_DOUBLE(window_top) || INVALID_DOUBLE(window_bottom) ||
-        INVALID_DOUBLE(window_left) || INVALID_DOUBLE(window_right)) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    ScanWindow window(window_top, window_bottom, window_left, window_right);
-    r = sh->SetWindow(camera, window);
+    r = sh->SetWindow(camera,
+                      window_top,
+                      window_bottom,
+                      window_left,
+                      window_right);
   } catch (std::range_error &e) {
     (void)e;
     r = JS_ERROR_INVALID_ARGUMENT;
@@ -1870,21 +2048,17 @@ EXPORTED int32_t jsScanHeadSetWindowRectangularLaser(
   int32_t r = 0;
 
   try {
-    if (INVALID_DOUBLE(window_top) || INVALID_DOUBLE(window_bottom) ||
-        INVALID_DOUBLE(window_left) || INVALID_DOUBLE(window_right)) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    ScanWindow window(window_top, window_bottom, window_left, window_right);
-    r = sh->SetWindow(laser, window);
-  } catch (std::range_error &e) {
-    (void)e;
-    r = JS_ERROR_INVALID_ARGUMENT;
+    r = sh->SetWindow(laser,
+                      window_top,
+                      window_bottom,
+                      window_left,
+                      window_right);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1901,13 +2075,9 @@ EXPORTED int32_t jsScanHeadSetPolygonWindow(
   int32_t r = 0;
 
   try {
-    if (nullptr == points) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetPolygonWindow(points, points_len);
@@ -1928,13 +2098,9 @@ EXPORTED int32_t jsScanHeadSetPolygonWindowCamera(
   int32_t r = 0;
 
   try {
-    if (nullptr == points) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->SetPolygonWindow(camera, points, points_len);
@@ -1955,16 +2121,154 @@ EXPORTED int32_t jsScanHeadSetPolygonWindowLaser(
   int32_t r = 0;
 
   try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->SetPolygonWindow(laser, points, points_len);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED int32_t jsScanHeadGetWindowTypeCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsScanWindowType *window_type
+)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->GetWindowType(camera, window_type);
+
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED int32_t jsScanHeadGetWindowTypeLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsScanWindowType *window_type
+)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->GetWindowType(laser, window_type);
+
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED int32_t jsScanHeadGetNumberWindowPointsCamera(
+  jsScanHead scan_head,
+  jsCamera camera)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->GetWindowCoordinatesCount(camera);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED int32_t jsScanHeadGetNumberWindowPointsLaser(
+  jsScanHead scan_head,
+  jsLaser laser)
+{
+  int32_t r = 0;
+
+  try {
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->GetWindowCoordinatesCount(laser);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED int32_t jsScanHeadGetWindowCamera(
+  jsScanHead scan_head,
+  jsCamera camera,
+  jsCoordinate *points)
+{
+  int32_t r = 0;
+
+  try {
     if (nullptr == points) {
       return JS_ERROR_NULL_ARGUMENT;
     }
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    r = sh->SetPolygonWindow(laser, points, points_len);
+    r = sh->GetWindowCoordinates(camera, points);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED int32_t jsScanHeadGetWindowLaser(
+  jsScanHead scan_head,
+  jsLaser laser,
+  jsCoordinate *points)
+{
+  int32_t r = 0;
+
+  try {
+    if (nullptr == points) {
+      return JS_ERROR_NULL_ARGUMENT;
+    }
+
+    ScanHead *sh = _get_scan_head_object(scan_head);
+    if (nullptr == sh) {
+      return JS_ERROR_INVALID_SCAN_HEAD;
+    }
+
+    r = sh->GetWindowCoordinates(laser, points);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -1979,22 +2283,12 @@ int32_t jsScanHeadGetStatus(jsScanHead scan_head, jsScanHeadStatus *status)
   int32_t r = 0;
 
   try {
-    if (nullptr == status) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    ScanManager &manager = sh->GetScanManager();
     StatusMessage msg;
-
-    if (false == manager.IsConnected()) {
-      return JS_ERROR_NOT_CONNECTED;
-    }
-
     r = sh->GetStatusMessage(&msg);
     if (0 != r) {
       return r;
@@ -2037,7 +2331,7 @@ int32_t jsScanHeadGetProfilesAvailable(jsScanHead scan_head)
   try {
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     uint32_t count = sh->AvailableProfiles();
@@ -2058,13 +2352,9 @@ int32_t jsScanHeadWaitUntilProfilesAvailable(jsScanHead scan_head,
   int32_t r = 0;
 
   try {
-    if (JS_SCAN_HEAD_PROFILES_MAX < count) {
-      count = JS_SCAN_HEAD_PROFILES_MAX;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     r = sh->WaitUntilAvailableProfiles(count, timeout_us);
@@ -2082,17 +2372,12 @@ int32_t jsScanHeadClearProfiles(jsScanHead scan_head)
   int32_t r = 0;
 
   try {
-    if (_is_frame_scanning) {
-      return JS_ERROR_FRAME_SCANNING;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    auto queue = sh->GetProfileQueue();
-    queue->Reset(ProfileQueue::MODE_SINGLE);
+    r = sh->ClearProfiles();
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -2108,34 +2393,12 @@ int32_t jsScanHeadGetRawProfiles(jsScanHead scan_head, jsRawProfile *profiles,
   int32_t r = 0;
 
   try {
-    if (_is_frame_scanning) {
-      return JS_ERROR_FRAME_SCANNING;
-    }
-
-    if (nullptr == profiles) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    auto queue = sh->GetProfileQueue();
-    jsRawProfile *p = nullptr;
-    int32_t n = 0;
-
-    while (max_profiles--) {
-      if (0 != queue->DequeueReady(&p)) {
-        break;
-      }
-      profiles[n++] = *p;
-      // this should never fail
-      r = queue->EnqueueFree(&p);
-      assert(0 == r);
-    }
-
-    r = int32_t(n);
+    r = sh->GetProfiles(profiles, max_profiles);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -2151,34 +2414,12 @@ int32_t jsScanHeadGetProfiles(jsScanHead scan_head, jsProfile *profiles,
   int32_t r = 0;
 
   try {
-    if (_is_frame_scanning) {
-      return JS_ERROR_FRAME_SCANNING;
-    }
-
-    if (nullptr == profiles) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    auto queue = sh->GetProfileQueue();
-    jsRawProfile *p = nullptr;
-    int32_t n = 0;
-
-    while (max_profiles--) {
-      if (0 != queue->DequeueReady(&p)) {
-        break;
-      }
-      RawProfileToProfile(p, &profiles[n++]);
-      // this should never fail
-      r = queue->EnqueueFree(&p);
-      assert(0 == r);
-    }
-
-    r = int32_t(n);
+    r = sh->GetProfiles(profiles, max_profiles);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -2204,14 +2445,13 @@ int32_t jsScanHeadGetDiagnosticProfileCamera(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
-    if (JS_DIAGNOSTIC_FIXED_EXPOSURE != mode) {
-      return JS_ERROR_INVALID_ARGUMENT;
-    }
-
-    r = sh->GetProfile(camera, camera_exposure_time_us, laser_on_time_us,
+    r = sh->GetProfile(camera, 
+                       mode,
+                       camera_exposure_time_us,
+                       laser_on_time_us,
                        profile);
   } catch (std::exception &e) {
     (void)e;
@@ -2232,20 +2472,16 @@ int32_t jsScanHeadGetDiagnosticProfileLaser(jsScanHead scan_head,
   int32_t r = JS_ERROR_INTERNAL;
 
   try {
-    if (nullptr == profile) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     if (JS_DIAGNOSTIC_FIXED_EXPOSURE != mode) {
       return JS_ERROR_INVALID_ARGUMENT;
     }
 
-    r = sh->GetProfile(laser, camera_exposure_time_us, laser_on_time_us,
+    r = sh->GetProfile(laser, mode, camera_exposure_time_us, laser_on_time_us,
                        profile);
   } catch (std::exception &e) {
     (void)e;
@@ -2272,7 +2508,7 @@ int32_t jsScanHeadGetDiagnosticImageCamera(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     if (JS_DIAGNOSTIC_FIXED_EXPOSURE != mode) {
@@ -2305,7 +2541,7 @@ int32_t jsScanHeadGetDiagnosticImageLaser(jsScanHead scan_head,
 
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     if (JS_DIAGNOSTIC_FIXED_EXPOSURE != mode) {
@@ -2331,13 +2567,9 @@ int32_t jsScanHeadGetDiagnosticImage(jsScanHead scan_head, jsCamera camera,
   int32_t r = JS_ERROR_INTERNAL;
 
   try {
-    if (nullptr == image) {
-      return JS_ERROR_NULL_ARGUMENT;
-    }
-
     ScanHead *sh = _get_scan_head_object(scan_head);
     if (nullptr == sh) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      return JS_ERROR_INVALID_SCAN_HEAD;
     }
 
     if (JS_DIAGNOSTIC_FIXED_EXPOSURE != mode) {

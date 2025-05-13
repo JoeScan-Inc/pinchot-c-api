@@ -311,9 +311,6 @@ void initialize_scan_heads(jsScanSystem &scan_system,
   int32_t r = 0;
 
   jsScanHeadConfiguration config;
-  config.camera_exposure_time_min_us = 10000;
-  config.camera_exposure_time_def_us = 47000;
-  config.camera_exposure_time_max_us = 900000;
   config.laser_on_time_min_us = 100;
   config.laser_on_time_def_us = 100;
   config.laser_on_time_max_us = 1000;
@@ -328,7 +325,7 @@ void initialize_scan_heads(jsScanSystem &scan_system,
     uint32_t serial = serial_numbers[i];
     auto scan_head = jsScanSystemCreateScanHead(scan_system, serial, i);
     if (0 > scan_head) {
-      throw ApiError("failed to create scan head", scan_head);
+      throw ApiError("failed to create scan head", (int32_t) scan_head);
     }
     scan_heads.push_back(scan_head);
 
@@ -384,7 +381,7 @@ int main(int argc, char *argv[])
   try {
     scan_system = jsScanSystemCreate(JS_UNITS_INCHES);
     if (0 > scan_system) {
-      throw ApiError("failed to create scan system", scan_system);
+      throw ApiError("failed to create scan system", (int32_t) scan_system);
     }
 
     // Initialize all the scan heads in the scan system and configure them

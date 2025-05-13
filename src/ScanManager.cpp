@@ -8,11 +8,13 @@
 #include "ScanManager.hpp"
 #include "ScanHead.hpp"
 
-#include "BroadcastDiscover.hpp"
 #include "FlatbufferMessages.hpp"
 #include "RawProfileToProfile.hpp"
 #include "StatusMessage.hpp"
+#include "UDPBroadcastSocket.hpp"
+#include "error_extended_macros.h"
 
+#include <execution>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -24,17 +26,29 @@ using namespace joescan;
 
 uint32_t ScanManager::m_uid_count = 0;
 
-ScanManager::ScanManager(jsUnits units, ScanSync *scansync) :
+ScanManager::ScanManager(jsUnits units, ScanSyncManager *scansync) :
   m_scansync(scansync),
   m_state(SystemState::Disconnected),
-  m_units(units)
+  m_units(units),
+  m_uid(0),
+  m_min_scan_period_us(0),
+  m_scan_period_us(0),
+  m_idle_scan_period_us(0),
+  m_frame_current_sequence(0),
+  m_is_frame_scanning(false),
+  m_is_frame_ready(false),
+  m_is_user_encoder_map(false),
+  m_is_encoder_dirty(true),
+  m_is_idle_scan_enabled(false)
 {
   m_uid = ++m_uid_count;
 
   Discover();
 
-  std::thread keep_alive_thread(&ScanManager::KeepAliveThread, this);
-  m_keep_alive_thread = std::move(keep_alive_thread);
+  // Initialize ScanSync encoder mapping to invalid
+  for (uint32_t n = 0; n < JS_ENCODER_MAX; n++) {
+    m_encoder_to_serial[(jsEncoder) n] = JS_SCANSYNC_INVALID_SERIAL;
+  }
 }
 
 ScanManager::~ScanManager()
@@ -44,24 +58,146 @@ ScanManager::~ScanManager()
     m_state = SystemState::Close;
   }
   m_condition.notify_all();
-  m_keep_alive_thread.join();
+
+  if (m_keep_alive_thread.joinable()) {
+    m_keep_alive_thread.join();
+  }
+  if (m_heart_beat_thread.joinable()) {
+    m_heart_beat_thread.join();
+  }
   RemoveAllScanHeads();
 }
 
-uint32_t ScanManager::GetUID()
+uint32_t ScanManager::GetUID() const
 {
   return m_uid;
 }
 
 int32_t ScanManager::Discover()
 {
+  CLEAR_ERROR();
+
   if (IsConnected()) {
-    return JS_ERROR_CONNECTED;
+    RETURN_ERROR("Request not allowed while connected", JS_ERROR_CONNECTED);
   }
 
-  int r = BroadcastDiscover(m_serial_to_discovered);
-  if (0 != r) {
-    return r;
+  using namespace schema::client;
+  static constexpr uint16_t kBroadcastDiscoverPort = 12347;
+  auto ifaces = NetworkInterface::GetClientInterfaces();
+  std::vector<std::unique_ptr<UDPBroadcastSocket>> sockets;
+
+  /////////////////////////////////////////////////////////////////////////////
+  // STEP 1: Get all available interfaces.
+  /////////////////////////////////////////////////////////////////////////////
+  {
+    for (auto const &iface : ifaces) {
+      try {
+        std::unique_ptr<UDPBroadcastSocket> sock(
+          new UDPBroadcastSocket(iface.ip_addr));
+        sockets.push_back(std::move(sock));
+      } catch (const std::runtime_error &) {
+        // Failed to init socket, continue with other sockets
+      }
+    }
+
+    if (sockets.size() == 0) {
+      RETURN_ERROR("No network interfaces found", JS_ERROR_NETWORK);
+    }
+  }
+
+  /////////////////////////////////////////////////////////////////////////////
+  // STEP 2: UDP broadcast ClientDiscovery message to all scan heads.
+  /////////////////////////////////////////////////////////////////////////////
+  {
+    using namespace schema::client;
+    flatbuffers::FlatBufferBuilder builder(64);
+
+    builder.Clear();
+    uint32_t maj = API_VERSION_MAJOR;
+    uint32_t min = API_VERSION_MINOR;
+    uint32_t pch = API_VERSION_PATCH;
+    auto msg_offset = CreateMessageClientDiscovery(builder, maj, min, pch);
+    builder.Finish(msg_offset);
+
+    // spam each network interface with our discover message
+    int sendto_count = 0;
+    for (auto const &socket : sockets) {
+      int r = socket->Send(kBroadcastDiscoverPort, builder);
+      if (0 == r) {
+        // sendto succeeded in sending message through interface
+        sendto_count++;
+      }
+    }
+
+    if (0 >= sendto_count) {
+      // no interfaces were able to send UDP broadcast
+      RETURN_ERROR("UDP network error", JS_ERROR_NETWORK);
+    }
+  }
+
+  // TODO: revist timeout? make it user controlled?
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  m_serial_to_discovered.clear();
+
+  /////////////////////////////////////////////////////////////////////////////
+  // STEP 3: See which (if any) scan heads responded.
+  /////////////////////////////////////////////////////////////////////////////
+  {
+    using namespace schema::server;
+    const uint32_t buf_len = 128;
+    uint8_t *buf = new uint8_t[buf_len];
+    uint32_t n = 0;
+
+    for (auto const &socket : sockets) {
+      // Get interface associated with socket; used for `jsDiscovered` struct
+      NetworkInterface::Client iface = ifaces[n++];
+
+      do {
+        int r = socket->Read(buf, buf_len);
+        if (0 >= r) {
+          break;
+        }
+
+        auto verifier = flatbuffers::Verifier(buf, (uint32_t) r);
+        if (!VerifyMessageServerDiscoveryBuffer(verifier)) {
+          // not a flatbuffer message
+          continue;
+        }
+
+        auto msg = UnPackMessageServerDiscovery(buf);
+        if (nullptr == msg) {
+          continue;
+        }
+
+        auto result = std::make_shared<jsDiscovered>();
+        result->serial_number = msg->serial_number;
+        result->type = (jsScanHeadType) msg->type;
+        result->firmware_version_major = msg->version_major;
+        result->firmware_version_minor = msg->version_minor;
+        result->firmware_version_patch = msg->version_patch;
+        result->ip_addr = msg->ip_server;
+        result->client_ip_addr = iface.ip_addr;
+        result->client_netmask = iface.net_mask;
+        result->link_speed_mbps = msg->link_speed_mbps;
+        result->state = (jsScanHeadState) msg->state;
+
+        size_t len = 0;
+
+        len = iface.name.copy(
+          result->client_name_str,
+          JS_CLIENT_NAME_STR_MAX_LEN - 1);
+        result->client_name_str[len] = 0;
+
+        len = msg->type_str.copy(
+          result->type_str,
+          JS_SCAN_HEAD_TYPE_STR_MAX_LEN - 1);
+        result->type_str[len] = 0;
+
+        m_serial_to_discovered[msg->serial_number] = result;
+      } while (1);
+    }
+
+    delete[] buf;
   }
 
   return (int32_t) (m_serial_to_discovered.size());
@@ -70,13 +206,16 @@ int32_t ScanManager::Discover()
 int32_t ScanManager::ScanHeadsDiscovered(jsDiscovered *results,
                                          uint32_t max_results)
 {
+  CLEAR_ERROR();
+
   jsDiscovered *dst = results;
 
   std::map<uint32_t, std::shared_ptr<jsDiscovered>>::iterator it =
     m_serial_to_discovered.begin();
 
-  uint32_t results_len = (uint32_t) (m_serial_to_discovered.size() < max_results ?
-                         m_serial_to_discovered.size() : max_results);
+  uint32_t results_len = (uint32_t)
+    (m_serial_to_discovered.size() < max_results ?
+     m_serial_to_discovered.size() : max_results);
 
   for (uint32_t n = 0; n < results_len; n++) {
     memcpy(dst, it->second.get(), sizeof(jsDiscovered));
@@ -87,30 +226,180 @@ int32_t ScanManager::ScanHeadsDiscovered(jsDiscovered *results,
   return (int32_t) m_serial_to_discovered.size();
 }
 
-PhaseTable *ScanManager::GetPhaseTable()
+int32_t ScanManager::DiscoverScanSyncs(jsScanSyncDiscovered *discovered,
+                                       uint32_t max_results)
 {
-  return &m_phase_table;
+  int r = 0;
+
+  if (!IsConnected()) {
+    RETURN_ERROR("Request not allowed while disconnected",
+                 JS_ERROR_NOT_CONNECTED);
+  }
+
+  auto common_scansyncs = m_scansync->GetDiscovered();
+
+  for (auto &p : m_id_to_scan_head) {
+    auto sh = p.second;
+    std::vector<jsScanSyncDiscovered> scanner_syncs(JS_ENCODER_MAX);
+
+    r = sh->SendScanSyncStatusRequest(&scanner_syncs[0], JS_ENCODER_MAX);
+    if (JS_ERROR_VERSION_COMPATIBILITY == r) {
+      continue;
+    } else if (0 >= r) {
+      return r;
+    }
+
+    // If we observe that a API discovered ScanSync isn't visible from a particular
+    // scanner, remove the ScanSync from the common list which initially was seen by
+    // the API
+    common_scansyncs.erase(
+      std::remove_if(common_scansyncs.begin(), common_scansyncs.end(),
+        [&scanner_syncs](const jsScanSyncDiscovered& api_sync) {
+          return std::none_of(scanner_syncs.begin(), scanner_syncs.end(),
+            [&api_sync](const jsScanSyncDiscovered& scanner_sync) {
+                return api_sync.serial_number == scanner_sync.serial_number;
+            });
+        }),
+      common_scansyncs.end()
+    );
+  }
+
+  uint32_t results_len = (uint32_t)
+    (common_scansyncs.size() < max_results ?
+    common_scansyncs.size() : max_results);
+
+  for (uint32_t i = 0; i < results_len; i++) {
+    memcpy(discovered + i, &common_scansyncs[i], sizeof(jsScanSyncDiscovered));
+  }
+
+  return results_len;
+}
+
+int32_t ScanManager::SetScanSyncEncoder(uint32_t serial_main,
+                                        uint32_t serial_aux1,
+                                        uint32_t serial_aux2)
+{
+  CLEAR_ERROR();
+  int r = 0;
+  // Note: It is expected that the user will call this after adding all the
+  // scan heads.
+  if (!m_version_scan_head_lowest.IsCompatible(16, 3, 0)) {
+    RETURN_ERROR("Requires firmware version v16.3.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
+  }
+
+  // Make sure the serial numbers are valid and that the user isn't trying to
+  // set Main and Aux2 but not Aux1.
+  if (JS_SCANSYNC_INVALID_SERIAL == serial_main) {
+    RETURN_ERROR("Invalid serial number for main encoder",
+                 JS_ERROR_INVALID_ARGUMENT);
+  } else if ((JS_SCANSYNC_INVALID_SERIAL == serial_aux1) &&
+             (JS_SCANSYNC_INVALID_SERIAL != serial_aux2)) {
+    RETURN_ERROR("Invalid serial number for aux1 encoder",
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  // Prevent the same ScanSync from being used in multiple assignments.
+  if ((serial_main == serial_aux1) || (serial_main == serial_aux2)) {
+    RETURN_ERROR("Duplicate encoder assignment for serial " +
+                 std::to_string(serial_main),
+                 JS_ERROR_INVALID_ARGUMENT);
+  } else if ((JS_SCANSYNC_INVALID_SERIAL != serial_aux1) &&
+             (serial_aux1 == serial_aux2)) {
+    RETURN_ERROR("Duplicate encoder assignment for serial " +
+                 std::to_string(serial_aux1),
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  std::vector<jsScanSyncDiscovered> discovered(JS_ENCODER_MAX);
+
+  r = DiscoverScanSyncs(&discovered[0], JS_ENCODER_MAX);
+  if (0 >= r) {
+    return JS_ERROR_NOT_DISCOVERED;
+  }
+
+  // Push serials to vector to allow easy use of `std::find` function.
+  std::vector<uint32_t> s;
+  for (auto &d : discovered) {
+    if (d.serial_number != 0) {
+      s.push_back(d.serial_number);
+    }
+  }
+
+  if (s.end() == std::find(s.begin(), s.end(), serial_main)) {
+    RETURN_ERROR("ScanSync " + std::to_string(serial_main) + " not discovered",
+                 JS_ERROR_NOT_DISCOVERED);
+  }
+  if (JS_SCANSYNC_INVALID_SERIAL != serial_aux1) {
+    if (s.end() == std::find(s.begin(), s.end(), serial_aux1)) {
+    RETURN_ERROR("ScanSync " + std::to_string(serial_aux1) + " not discovered",
+                 JS_ERROR_NOT_DISCOVERED);
+    }
+  }
+  if (JS_SCANSYNC_INVALID_SERIAL != serial_aux2) {
+    if (s.end() == std::find(s.begin(), s.end(), serial_aux2)) {
+    RETURN_ERROR("ScanSync " + std::to_string(serial_aux2) + " not discovered",
+                 JS_ERROR_NOT_DISCOVERED);
+    }
+  }
+
+  m_encoder_to_serial[JS_ENCODER_MAIN] = serial_main;
+  m_encoder_to_serial[JS_ENCODER_AUX_1] = serial_aux1;
+  m_encoder_to_serial[JS_ENCODER_AUX_2] = serial_aux2;
+  m_is_user_encoder_map = true;
+  m_is_encoder_dirty = true;
+
+  return 0;
+}
+
+int32_t ScanManager::GetScanSyncEncoder(uint32_t *serial_main,
+                                        uint32_t *serial_aux1,
+                                        uint32_t *serial_aux2)
+{
+  CLEAR_ERROR();
+
+  if (0 == m_encoder_to_serial.count(JS_ENCODER_MAIN)) {
+    *serial_main = 0;
+  } else {
+    *serial_main = m_encoder_to_serial[JS_ENCODER_MAIN];
+  }
+
+  if (0 == m_encoder_to_serial.count(JS_ENCODER_AUX_1)) {
+    *serial_aux1 = 0;
+  } else {
+    *serial_aux1 = m_encoder_to_serial[JS_ENCODER_AUX_1];
+  }
+
+  if (0 == m_encoder_to_serial.count(JS_ENCODER_AUX_2)) {
+    *serial_aux2 = 0;
+  } else {
+    *serial_aux2 = m_encoder_to_serial[JS_ENCODER_AUX_2];
+  }
+
+  return 0;
 }
 
 int32_t ScanManager::CreateScanHead(uint32_t serial_number, uint32_t id)
 {
+  CLEAR_ERROR();
+
   ScanHead *sh = nullptr;
 
   if (IsScanning()) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Can not create scan head while scanning", JS_ERROR_SCANNING);
   }
 
   if (INT_MAX < id) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid scan head id", JS_ERROR_INVALID_ARGUMENT);
   }
 
   if (m_serial_to_scan_head.find(serial_number) !=
       m_serial_to_scan_head.end()) {
-    return JS_ERROR_ALREADY_EXISTS;
+    RETURN_ERROR("Scan head already exists", JS_ERROR_ALREADY_EXISTS);
   }
 
   if (m_id_to_scan_head.find(id) != m_id_to_scan_head.end()) {
-    return JS_ERROR_ALREADY_EXISTS;
+    RETURN_ERROR("Scan head id already in use", JS_ERROR_ALREADY_EXISTS);
   }
 
   if (m_serial_to_discovered.find(serial_number) ==
@@ -119,13 +408,32 @@ int32_t ScanManager::CreateScanHead(uint32_t serial_number, uint32_t id)
     Discover();
     if (m_serial_to_discovered.find(serial_number) ==
       m_serial_to_discovered.end()) {
-      return JS_ERROR_NOT_DISCOVERED;
+      RETURN_ERROR("Scan head not discovered on network",
+                   JS_ERROR_NOT_DISCOVERED);
     }
   }
 
   auto discovered = m_serial_to_discovered[serial_number];
   if (API_VERSION_MAJOR != discovered->firmware_version_major) {
-    return JS_ERROR_VERSION_COMPATIBILITY;
+    std::string fwver = std::to_string(discovered->firmware_version_major) +
+                        std::to_string(discovered->firmware_version_minor) +
+                        std::to_string(discovered->firmware_version_patch);
+    RETURN_ERROR("API not compatible with firmware v" + fwver,
+                 JS_ERROR_VERSION_COMPATIBILITY);
+  }
+
+  SemanticVersion version_scan_head(discovered->firmware_version_major,
+                                    discovered->firmware_version_minor,
+                                    discovered->firmware_version_patch);
+  if (0 == m_serial_to_scan_head.size()) {
+    m_version_scan_head_highest = version_scan_head;
+    m_version_scan_head_lowest = version_scan_head;
+  } else {
+    if (m_version_scan_head_highest.IsLessThan(version_scan_head)) {
+      m_version_scan_head_highest = version_scan_head;
+    } else if (m_version_scan_head_lowest.IsGreaterThan(version_scan_head)) {
+      m_version_scan_head_lowest = version_scan_head;
+    }
   }
 
   sh = new ScanHead(*this, *discovered, id);
@@ -137,10 +445,12 @@ int32_t ScanManager::CreateScanHead(uint32_t serial_number, uint32_t id)
 
 ScanHead *ScanManager::GetScanHeadBySerial(uint32_t serial_number)
 {
-  auto res = m_serial_to_scan_head.find(serial_number);
+  CLEAR_ERROR();
 
+  auto res = m_serial_to_scan_head.find(serial_number);
   if (res == m_serial_to_scan_head.end()) {
-    return nullptr;
+    RETURN_ERROR_NULLPTR("Scan head serial " + std::to_string(serial_number) +
+                         " not managed");
   }
 
   return res->second;
@@ -148,10 +458,11 @@ ScanHead *ScanManager::GetScanHeadBySerial(uint32_t serial_number)
 
 ScanHead *ScanManager::GetScanHeadById(uint32_t id)
 {
-  auto res = m_id_to_scan_head.find(id);
+  CLEAR_ERROR();
 
+  auto res = m_id_to_scan_head.find(id);
   if (res == m_id_to_scan_head.end()) {
-    return nullptr;
+    RETURN_ERROR_NULLPTR("Scan head id " + std::to_string(id) + " not managed");
   }
 
   return res->second;
@@ -159,13 +470,17 @@ ScanHead *ScanManager::GetScanHeadById(uint32_t id)
 
 int32_t ScanManager::RemoveScanHead(uint32_t serial_number)
 {
+  CLEAR_ERROR();
+
   if (IsScanning()) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
   }
 
   auto res = m_serial_to_scan_head.find(serial_number);
   if (res == m_serial_to_scan_head.end()) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Scan head serial " + std::to_string(serial_number) +
+                 " not managed",
+                 JS_ERROR_INVALID_ARGUMENT);
   }
 
   uint32_t id = res->second->GetId();
@@ -179,8 +494,10 @@ int32_t ScanManager::RemoveScanHead(uint32_t serial_number)
 
 int32_t ScanManager::RemoveScanHead(ScanHead *scan_head)
 {
+  CLEAR_ERROR();
+
   if (scan_head == nullptr) {
-    return JS_ERROR_NULL_ARGUMENT;
+    RETURN_ERROR("Null scan head argument", JS_ERROR_NULL_ARGUMENT);
   }
 
   RemoveScanHead(scan_head->GetSerialNumber());
@@ -188,11 +505,12 @@ int32_t ScanManager::RemoveScanHead(ScanHead *scan_head)
   return 0;
 }
 
-void ScanManager::RemoveAllScanHeads()
+int32_t ScanManager::RemoveAllScanHeads()
 {
+  CLEAR_ERROR();
+
   if (IsScanning()) {
-    std::string error_msg = "Can not remove scanners while scanning";
-    throw std::runtime_error(error_msg);
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
   }
 
   // We copy the serials to a new vector because the function `RemoveScanHead`
@@ -206,98 +524,279 @@ void ScanManager::RemoveAllScanHeads()
   for (auto &serial : serials) {
     RemoveScanHead(serial);
   }
+
+  return 0;
 }
 
-uint32_t ScanManager::GetNumberScanners()
+uint32_t ScanManager::GetNumberScanners() const
 {
   return static_cast<uint32_t>(m_serial_to_scan_head.size());
 }
 
-int32_t ScanManager::Connect(uint32_t timeout_s)
+int32_t ScanManager::PhaseClearAll()
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
 
   if (IsScanning()) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  m_phase_table.Reset();
+
+  return 0;
+}
+
+int32_t ScanManager::PhaseCreate()
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  m_phase_table.CreatePhase();
+
+  return 0;
+}
+
+int32_t ScanManager::PhaseInsert(ScanHead *scan_head, jsCamera camera)
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  int r = m_phase_table.AddToLastPhaseEntry(scan_head, camera);
+  if (0 > r) {
+    RETURN_ERROR(m_phase_table.GetErrorExtended(), r);
+  }
+
+  return 0;
+}
+
+int32_t ScanManager::PhaseInsert(ScanHead *scan_head, jsLaser laser)
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  int r = m_phase_table.AddToLastPhaseEntry(scan_head, laser);
+  if (0 > r) {
+    RETURN_ERROR(m_phase_table.GetErrorExtended(), r);
+  }
+
+  return 0;
+}
+
+int32_t ScanManager::PhaseInsert(ScanHead *scan_head, jsCamera camera,
+                    jsScanHeadConfiguration *config)
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  int r = m_phase_table.AddToLastPhaseEntry(scan_head, camera, config);
+  if (0 > r) {
+    RETURN_ERROR(m_phase_table.GetErrorExtended(), r);
+  }
+
+  return 0;
+}
+
+int32_t ScanManager::PhaseInsert(ScanHead *scan_head, jsLaser laser,
+                    jsScanHeadConfiguration *config)
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  int r = m_phase_table.AddToLastPhaseEntry(scan_head, laser, config);
+  if (0 > r) {
+    RETURN_ERROR(m_phase_table.GetErrorExtended(), r);
+  }
+
+  return 0;
+}
+
+int32_t ScanManager::SetIdleScanPeriod(uint32_t period_us)
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  m_idle_scan_period_us = period_us;
+  m_is_idle_scan_enabled = true;
+
+  return 0;
+}
+
+int32_t ScanManager::DisableIdleScanning()
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
+  }
+
+  m_idle_scan_period_us = 0;
+  m_is_idle_scan_enabled = false;
+
+  return 0;
+}
+
+uint32_t ScanManager::GetIdleScanPeriod()
+{
+  return m_idle_scan_period_us;
+}
+
+bool ScanManager::IsIdleScanningEnabled()
+{
+  return m_is_idle_scan_enabled;
+}
+
+int32_t ScanManager::Connect(uint32_t timeout_s)
+{
+  CLEAR_ERROR();
+
+  if (IsScanning()) {
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
   }
 
   if (IsConnected()) {
-    return JS_ERROR_CONNECTED;
+    RETURN_ERROR("Already connected to scan heads", JS_ERROR_CONNECTED);
+  }
+
+  if (m_serial_to_scan_head.empty()) {
+    RETURN_ERROR("No scan heads in scan system" , JS_ERROR_NOT_CONNECTED);
   }
 
   std::map<uint32_t, ScanHead *> connected;
-  if (m_serial_to_scan_head.empty()) {
-    return 0;
-  }
+  std::mutex mut;
 
-  int32_t timeout_ms = timeout_s * 1000;
-  for (auto const &pair : m_serial_to_scan_head) {
-    uint32_t serial = pair.first;
-    ScanHead *scan_head = pair.second;
-
-    if (0 != scan_head->Connect(timeout_s)) {
-      continue;
-    }
-
-    connected[serial] = scan_head;
-  }
+  std::for_each(std::execution::par,
+    m_serial_to_scan_head.begin(), m_serial_to_scan_head.end(),
+    [&](auto& pair) {
+      uint32_t serial = pair.first;
+      ScanHead* scan_head = pair.second;
+      if (0 == scan_head->Connect(timeout_s)) {
+        std::scoped_lock lk(mut);
+        connected[serial] = scan_head;
+      }
+    });
 
   if (connected.size() == m_serial_to_scan_head.size()) {
     m_state = SystemState::Connected;
+    // JS-50 server clears ScanSync mapping on new connection
+    m_is_encoder_dirty = true;
 
     int r = Configure();
     if (0 != r) {
-      return r;
+      return r; // rely on previous function to set extended error
     }
   }
 
+  std::thread keep_alive_thread(&ScanManager::KeepAliveThread, this);
+  m_keep_alive_thread = std::move(keep_alive_thread);
+
+  std::thread heart_beat_thread(&ScanManager::HeartBeatThread, this);
+  m_heart_beat_thread = std::move(heart_beat_thread);
   return int32_t(connected.size());
 }
 
-void ScanManager::Disconnect()
+int32_t ScanManager::Disconnect()
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
 
   if (!IsConnected()) {
-    std::string error_msg = "Not connected.";
-    throw std::runtime_error(error_msg);
+    RETURN_ERROR("Already disconnected", JS_ERROR_NOT_CONNECTED);
   }
 
   if (IsScanning()) {
-    std::string error_msg = "Can not disconnect wile still scanning";
-    throw std::runtime_error(error_msg);
+    StopScanning();
   }
 
-  for (auto const &pair : m_serial_to_scan_head) {
-    ScanHead *scan_head = pair.second;
-    scan_head->Disconnect();
-  }
+  std::for_each(std::execution::par,
+    m_serial_to_scan_head.begin(), m_serial_to_scan_head.end(),
+    [&](auto& pair) {
+      ScanHead* scan_head = pair.second;
+      scan_head->Disconnect();
+    });
 
   m_state = SystemState::Disconnected;
+  m_is_encoder_dirty = true;
+  return 0;
 }
 
 int ScanManager::StartScanning(uint32_t period_us, jsDataFormat fmt,
                                bool is_frame_scanning)
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
 
   int r = 0;
 
   if (!IsConnected()) {
-    return JS_ERROR_NOT_CONNECTED;
+    RETURN_ERROR("Request not allowed while disconnected",
+                 JS_ERROR_NOT_CONNECTED);
   }
 
   if (IsScanning()) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Already scanning", JS_ERROR_SCANNING);
+  }
+
+  if (0 == m_phase_table.GetNumberOfPhases()) {
+    RETURN_ERROR("Phase table empty", JS_ERROR_PHASE_TABLE_EMPTY);
+  }
+
+  if (m_phase_table.HasDuplicateElements() && is_frame_scanning) {
+    RETURN_ERROR("Phase table with duplicate elements not compatible with "
+                 "frame scanning",
+                 JS_ERROR_FRAME_SCANNING_INVALID_PHASE_TABLE);
+  }
+
+  if (m_is_idle_scan_enabled && m_idle_scan_period_us <= period_us && 
+      m_idle_scan_period_us != 0) {
+    RETURN_ERROR("Idle scan period must be greater than the scan period",
+                JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (!m_is_user_encoder_map) {
+    // ScanSync mapping has not been set by user; set to default.
+    // Default ScanSync mapping is lowest serial number as Main.
+    // NOTE: discover function returns serials in ascending order.
+    m_is_encoder_dirty = true;
+    std::vector<jsScanSyncDiscovered> d(JS_ENCODER_MAX);
+    r = DiscoverScanSyncs(&d[0], JS_ENCODER_MAX);
+    uint32_t sync_count = 0 > r ? 0 : r;
+
+    for (uint32_t n = 0; n <= JS_ENCODER_MAX; n++) {
+      jsEncoder e = (jsEncoder) n;
+      if (n < sync_count) {
+        m_encoder_to_serial[e] = d[n].serial_number;
+      } else {
+        m_encoder_to_serial[e] = JS_SCANSYNC_INVALID_SERIAL;
+      }
+    }
   }
 
   r = Configure();
   if (0 != r) {
-    return r;
+    return r; // rely on previous function to set extended error
   }
 
   if (m_min_scan_period_us > period_us) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Requested scan period " + std::to_string(period_us) +
+                 "us is less than minimum " +
+                 std::to_string(m_min_scan_period_us) + "us",
+                 JS_ERROR_INVALID_ARGUMENT);
   }
 
   /**
@@ -308,19 +807,24 @@ int ScanManager::StartScanning(uint32_t period_us, jsDataFormat fmt,
    * start scanning; they are unknown before then.
    */
   for (auto const &pair : m_serial_to_scan_head) {
-    ScanHead *scan_head = pair.second;
-    r = scan_head->SendScanConfiguration(period_us, fmt, is_frame_scanning);
+    ScanHead *sh = pair.second;
+    r = sh->SendScanConfiguration(period_us, fmt, is_frame_scanning);
     if (0 != r) {
-      return r;
+      RETURN_ERROR(sh->GetErrorExtended(), r);
     }
   }
 
-  scansync_data data;
+  // NOTE: start time of `0` will cause the scan server to calculate its own
+  // start time from its system clock.
   uint64_t start_time_ns = 0;
-  if (0 == m_scansync->GetData(&data)) {
-    // 20ms offset seems to work; less than that causes skipped sequences.
-    const uint64_t kStartTimeOffsetNs = 20000000;
-    start_time_ns = data.timestamp_ns + kStartTimeOffsetNs;
+  if (m_encoder_to_serial.count(JS_ENCODER_MAIN)) {
+    jsScanSyncStatus scansync_status;
+    if (0 == m_scansync->GetStatus(m_encoder_to_serial[JS_ENCODER_MAIN],
+                                   &scansync_status)) {
+      // 20ms offset seems to work; less than that causes skipped sequences.
+      const uint64_t kStartTimeOffsetNs = 20000000;
+      start_time_ns = scansync_status.timestamp_ns + kStartTimeOffsetNs;
+    }
   }
 
   if (is_frame_scanning) {
@@ -336,7 +840,7 @@ int ScanManager::StartScanning(uint32_t period_us, jsDataFormat fmt,
 
     r = sh->StartScanning(start_time_ns, is_frame_scanning);
     if (0 != r) {
-      return r;
+      RETURN_ERROR(sh->GetErrorExtended(), r);
     }
   }
 
@@ -367,12 +871,19 @@ uint32_t ScanManager::GetProfilesPerFrame() const
 
 int32_t ScanManager::WaitUntilFrameAvailable(uint32_t timeout_us)
 {
-  if (!IsScanning() || !m_is_frame_scanning) return JS_ERROR_NOT_SCANNING;
+  CLEAR_ERROR();
+
+  if (!IsScanning()) {
+    RETURN_ERROR("Request only allowed while scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  } else if (!m_is_frame_scanning) {
+    RETURN_ERROR("Request only allowed during frame scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  }
 
   // Sleep period to poll for frame status
   const int32_t sleep_us = m_scan_period_us / 4;
   int32_t time_remaining_us = timeout_us;
-  int32_t r = 0;
 
   do {
     int64_t seq_min = -1;
@@ -409,7 +920,7 @@ int32_t ScanManager::WaitUntilFrameAvailable(uint32_t timeout_us)
       // calling `GetFrame()` as it will need to repeat the above unless it
       // is informed that a frame is has already been found to be ready.
       m_is_frame_ready = true;
-      return 1;
+      return 1; // frame ready
     }
 
     if (time_remaining_us > 0) {
@@ -420,13 +931,20 @@ int32_t ScanManager::WaitUntilFrameAvailable(uint32_t timeout_us)
     }
   } while (1);
 
-  return 0;
+  return 0; // frame not ready
 }
 
 int32_t ScanManager::GetFrame(jsProfile *profiles)
 {
-  if (!IsScanning() || !m_is_frame_scanning) return JS_ERROR_NOT_SCANNING;
+  CLEAR_ERROR();
 
+  if (!IsScanning()) {
+    RETURN_ERROR("Request only allowed while scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  } else if (!m_is_frame_scanning) {
+    RETURN_ERROR("Request only allowed during frame scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  }
   int32_t r = 0;
 
   if (!m_is_frame_ready) {
@@ -434,7 +952,7 @@ int32_t ScanManager::GetFrame(jsProfile *profiles)
     // see if a frame is actually ready or not.
     r = WaitUntilFrameAvailable(0);
     if (0 >= r) {
-      return r;
+      return r; // rely on previous function to set extended error
     }
   }
 
@@ -495,7 +1013,15 @@ int32_t ScanManager::GetFrame(jsProfile *profiles)
 
 int32_t ScanManager::GetFrame(jsRawProfile *profiles)
 {
-  if (!IsScanning() || !m_is_frame_scanning) return JS_ERROR_NOT_SCANNING;
+  CLEAR_ERROR();
+
+  if (!IsScanning()) {
+    RETURN_ERROR("Request only allowed while scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  } else if (!m_is_frame_scanning) {
+    RETURN_ERROR("Request only allowed during frame scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  }
 
   int32_t r = 0;
 
@@ -504,7 +1030,7 @@ int32_t ScanManager::GetFrame(jsRawProfile *profiles)
     // see if a frame is actually ready or not.
     r = WaitUntilFrameAvailable(0);
     if (0 >= r) {
-      return r;
+      return r; // rely on previous function to set extended error
     }
   }
 
@@ -570,7 +1096,15 @@ int32_t ScanManager::GetFrame(jsRawProfile *profiles)
 
 int32_t ScanManager::ClearFrames()
 {
-  if (!IsScanning() || !m_is_frame_scanning) return JS_ERROR_NOT_SCANNING;
+  CLEAR_ERROR();
+
+  if (!IsScanning()) {
+    RETURN_ERROR("Request only allowed while scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  } else if (!m_is_frame_scanning) {
+    RETURN_ERROR("Request only allowed during frame scanning",
+                 JS_ERROR_NOT_CONNECTED);
+  }
 
   uint32_t seq_max = 0;
 
@@ -597,12 +1131,15 @@ int32_t ScanManager::ClearFrames()
 
 int32_t ScanManager::StopScanning()
 {
+  CLEAR_ERROR();
+
   if (!IsConnected()) {
-    return JS_ERROR_NOT_CONNECTED;
+    RETURN_ERROR("Request not allowed while disconnected",
+                 JS_ERROR_NOT_CONNECTED);
   }
 
   if (!IsScanning()) {
-    return JS_ERROR_NOT_SCANNING;
+    RETURN_ERROR("Already stopped scanning", JS_ERROR_NOT_SCANNING);
   }
 
   for (auto const &pair : m_serial_to_scan_head) {
@@ -622,63 +1159,101 @@ int32_t ScanManager::StopScanning()
 
 int32_t ScanManager::Configure()
 {
-  int r = 0;
+  CLEAR_ERROR();
 
   // Only run configure code if the scan system is connected & not scanning.
   if (IsScanning()) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
   } else if (!IsConnected()) {
-    return JS_ERROR_NOT_CONNECTED;
+    RETURN_ERROR("Request not allowed while disconnected",
+                 JS_ERROR_NOT_CONNECTED);
   }
 
   bool is_config_dirty = !IsConfigured();
   bool is_phase_table_dirty = m_phase_table.IsDirty();
 
+  if (m_is_encoder_dirty) {
+    if (JS_SCANSYNC_INVALID_SERIAL != m_encoder_to_serial[JS_ENCODER_MAIN]) {
+      for (auto const &pair : m_serial_to_scan_head) {
+        ScanHead *sh = pair.second;
+        int r = sh->SendEncoders(m_encoder_to_serial[JS_ENCODER_MAIN],
+                             m_encoder_to_serial[JS_ENCODER_AUX_1],
+                             m_encoder_to_serial[JS_ENCODER_AUX_2]);
+        if (JS_ERROR_VERSION_COMPATIBILITY == r && !m_is_user_encoder_map) {
+          // User did not set an encoder mapping and the scan head does
+          // not support sending a mapping. The scan head will use the default
+          // mapping instead.
+          r = 0;
+        } else if (0 > r) {
+          RETURN_ERROR(sh->GetErrorExtended(), r);
+        }
+      }
+      m_is_encoder_dirty = false;
+    }
+  }
+
   // Skip code below if we've already configured and nothing has changed.
   if (is_config_dirty) {
-    // We break each data send into it's own loop as to avoid hitting one head
-    // with a lot of data and slow down configuring the system. Breaking it down
-    // into separate send loops makes this whole process pseudo parallel.
-    for (auto const &pair : m_serial_to_scan_head) {
-      ScanHead *sh = pair.second;
-      r = sh->SendWindow();
-      if (0 != r) {
-        return r;
-      }
-    }
+    std::mutex err_mut;
+    int err_serial = 0;
+    int err = 0;
 
-    for (auto const &pair : m_serial_to_scan_head) {
-      ScanHead *sh = pair.second;
-      r = sh->SendBrightnessCorrection();
-      if (0 != r) {
-        return r;
-      }
-    }
+    std::for_each(std::execution::par,
+      m_serial_to_scan_head.begin(), m_serial_to_scan_head.end(),
+      [&](auto& pair) {
+        ScanHead* sh = pair.second;
+        int r = 0;
 
-    for (auto const &pair : m_serial_to_scan_head) {
-      ScanHead *sh = pair.second;
-      r = sh->SendExclusionMask();
-      if (0 != r) {
-        return r;
-      }
-    }
+        r = sh->SendWindow();
+        if (0 != r) {
+          std::scoped_lock<std::mutex> lk(err_mut);
+          err = r;
+          err_serial = sh->GetSerialNumber();
+          return;
+        }
 
-    // grab status message for each scan head; these are currently cached
-    // inside the scan head class and are used later when the phase table is
-    // calculated
-    // TODO: improve this functionality; it's really not apparent as to what is
-    // happening and how data is propagated.
-    for (auto const &pair : m_serial_to_scan_head) {
-      ScanHead *sh = pair.second;
-      StatusMessage msg;
-      sh->GetStatusMessage(&msg);
-    }
+        r = sh->SendBrightnessCorrection();
+        if ((0 > r) && (JS_ERROR_VERSION_COMPATIBILITY != r)) {
+          // Only error we allow is version compatibility. This will cause the
+          // head to be skipped for sending data. If the user tried to set this
+          // earlier, they should have already received an error; only case left
+          // to consider is sending the "default" value if unset.
+          std::scoped_lock<std::mutex> lk(err_mut);
+          err = r;
+          err_serial = sh->GetSerialNumber();
+          return;
+        }
 
-    // we've set up & sent all the relevant data, clear the "dirty" flag so
-    // we don't go through these steps again
-    for (auto const &pair : m_serial_to_scan_head) {
-      ScanHead *sh = pair.second;
-      sh->ClearDirty();
+        r = sh->SendExclusionMask();
+        if ((0 > r) && (JS_ERROR_VERSION_COMPATIBILITY != r)) {
+          // Only error we allow is version compatibility. This will cause the
+          // head to be skipped for sending data. If the user tried to set this
+          // earlier, they should have already received an error; only case left
+          // to consider is sending the "default" value if unset.
+          std::scoped_lock<std::mutex> lk(err_mut);
+          err = r;
+          err_serial = sh->GetSerialNumber();
+          return;
+        }
+
+        StatusMessage msg;
+        r = sh->GetStatusMessage(&msg);
+        if (0 != r) {
+          std::scoped_lock<std::mutex> lk(err_mut);
+          err = r;
+          err_serial = sh->GetSerialNumber();
+          return;
+        }
+
+        sh->ClearDirty();
+      });
+
+    // This only returns the last error that occurred. Most likely, all scan
+    // heads will have the same error so it's not too big of a deal to not
+    // report all errors at once. Maybe this can be changed in the future.
+    if (0 > err) {
+      auto sh = m_serial_to_scan_head[err_serial];
+      RETURN_ERROR(sh->GetErrorExtended(), err);
     }
   }
 
@@ -694,8 +1269,8 @@ int32_t ScanManager::Configure()
                            table.camera_early_offset_us;
 
     for (auto const &pair : m_serial_to_scan_head) {
-      ScanHead *scan_head = pair.second;
-      scan_head->ResetScanPairs();
+      ScanHead *sh = pair.second;
+      sh->ResetScanPairs();
     }
 
     // Set up the scan pairs; this defines what scans and when within the phase.
@@ -704,11 +1279,14 @@ int32_t ScanManager::Configure()
       for (auto &phase : table.phases) {
         end_offset_us += phase.duration_us;
         for (auto &el : phase.elements) {
-          ScanHead *scan_head = el.scan_head;
+          ScanHead *sh = el.scan_head;
           jsCamera camera = el.camera;
           jsLaser laser = el.laser;
           jsScanHeadConfiguration &cfg = el.cfg;
-          scan_head->AddScanPair(camera, laser, cfg, end_offset_us);
+          int r = sh->AddScanPair(camera, laser, cfg, end_offset_us);
+          if (0 != r) {
+            RETURN_ERROR(sh->GetErrorExtended(), r);
+          }
         }
       }
     }
@@ -716,20 +1294,24 @@ int32_t ScanManager::Configure()
     // Now that scan pairs are set, we can send the alignment.
     for (auto const &pair : m_serial_to_scan_head) {
       ScanHead *sh = pair.second;
-      r = sh->SendScanAlignmentValue();
-      if (0 != r) {
-        return r;
+      if (0 != sh->GetScanPairsCount()) {
+        int r = sh->SendScanAlignmentValue();
+        if (0 != r) {
+          RETURN_ERROR(sh->GetErrorExtended(), r);
+        }
       }
     }
 
     m_phase_table.ClearDirty();
   }
 
-  return r;
+  return 0;
 }
 
 uint32_t ScanManager::GetMinScanPeriod()
 {
+  CLEAR_ERROR();
+
   if (!IsConnected()) {
     return 0;
   }
@@ -757,6 +1339,11 @@ bool ScanManager::IsConfigured() const
   return is_configured;
 }
 
+std::string ScanManager::GetErrorExtended() const
+{
+  return m_error_extended_str;
+}
+
 void ScanManager::KeepAliveThread()
 {
   // The server will keep itself scanning as long as it can send profile data
@@ -764,12 +1351,17 @@ void ScanManager::KeepAliveThread()
   // recover in the event that they fail to send and go into idle state.
   const uint32_t keep_alive_send_ms = 1000;
 
+  // Silently exit when we have heart beat support
+  if (m_version_scan_head_lowest.IsCompatible(16, 3, 0)) {
+    return;
+  }
+
   while (1) {
     std::unique_lock<std::mutex> lk(m_mutex);
     m_condition.wait_for(lk, std::chrono::milliseconds(keep_alive_send_ms));
 
     if (SystemState::Close == m_state) {
-      return;
+      return; // close the thread
     } else if (SystemState::Scanning != m_state) {
       continue;
     }
@@ -777,6 +1369,53 @@ void ScanManager::KeepAliveThread()
     for (auto const &pair : m_serial_to_scan_head) {
       ScanHead *scan_head = pair.second;
       scan_head->SendKeepAlive();
+    }
+  }
+}
+
+void ScanManager::HeartBeatThread()
+{
+  constexpr uint32_t SEND_INTERVAL_MS = 250;
+  constexpr uint32_t DEFAULT_TIMEOUT_SEC = 0;
+  constexpr uint32_t DEFAULT_TIMEOUT_USEC =
+    (SEND_INTERVAL_MS * 1000 ) * 2;
+  constexpr uint32_t CONNECTED_TIMEOUT_SEC = 1;
+  constexpr uint32_t CONNECTED_TIMEOUT_USEC = 0;
+
+  struct timeval timeout;
+  timeout.tv_sec = DEFAULT_TIMEOUT_SEC;
+  timeout.tv_usec = DEFAULT_TIMEOUT_USEC;
+
+  // Silently exit when we don't have compatible devices
+  if (!m_version_scan_head_lowest.IsCompatible(16, 3, 0)) {
+    return;
+  }
+
+  while (1) {
+    std::unique_lock<std::mutex> lk(m_mutex);
+    m_condition.wait_for(lk, std::chrono::milliseconds(SEND_INTERVAL_MS));
+
+    if (SystemState::Close == m_state) {
+      return; // close the thread
+    } else if (SystemState::Disconnected == m_state) {
+      continue;
+    }
+
+    // Set timeout based on system state
+    if (SystemState::Connected == m_state) {
+      // During the switch from connected to scanning,
+      // scanner setup time takes a while, so just set a higher timeout
+      timeout.tv_sec = CONNECTED_TIMEOUT_SEC;
+      timeout.tv_usec = CONNECTED_TIMEOUT_USEC;
+    } else {
+      timeout.tv_sec = DEFAULT_TIMEOUT_SEC;
+      timeout.tv_usec = DEFAULT_TIMEOUT_USEC;
+    }
+
+    // Send heartbeats to all scan heads
+    for (const auto& pair : m_serial_to_scan_head) {
+      ScanHead* scan_head = pair.second;
+      scan_head->GetHeartBeat(&timeout);
     }
   }
 }

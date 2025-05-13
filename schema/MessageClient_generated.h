@@ -6,8 +6,8 @@
 
 #include "flatbuffers/flatbuffers.h"
 
-#include "MessageClientEnums_generated.h"
 #include "StoreInfoData_generated.h"
+#include "MessageClientEnums_generated.h"
 
 namespace joescan {
 namespace schema {
@@ -82,11 +82,13 @@ enum MessageType : uint16_t {
   MessageType_BRIGHTNESS_CORRECTION = 13,
   MessageType_STORE_INFO = 14,
   MessageType_SCANSYNC_CONFIGURATION = 15,
+  MessageType_SCANSYNC_STATUS_REQUEST = 16,
+  MessageType_HEART_BEAT_REQUEST = 17,
   MessageType_MIN = MessageType_NONE,
-  MessageType_MAX = MessageType_SCANSYNC_CONFIGURATION
+  MessageType_MAX = MessageType_HEART_BEAT_REQUEST
 };
 
-inline const MessageType (&EnumValuesMessageType())[16] {
+inline const MessageType (&EnumValuesMessageType())[18] {
   static const MessageType values[] = {
     MessageType_NONE,
     MessageType_CONNECT,
@@ -103,13 +105,15 @@ inline const MessageType (&EnumValuesMessageType())[16] {
     MessageType_EXCLUSION_MASK,
     MessageType_BRIGHTNESS_CORRECTION,
     MessageType_STORE_INFO,
-    MessageType_SCANSYNC_CONFIGURATION
+    MessageType_SCANSYNC_CONFIGURATION,
+    MessageType_SCANSYNC_STATUS_REQUEST,
+    MessageType_HEART_BEAT_REQUEST
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessageType() {
-  static const char * const names[17] = {
+  static const char * const names[19] = {
     "NONE",
     "CONNECT",
     "DISCONNECT",
@@ -126,13 +130,15 @@ inline const char * const *EnumNamesMessageType() {
     "BRIGHTNESS_CORRECTION",
     "STORE_INFO",
     "SCANSYNC_CONFIGURATION",
+    "SCANSYNC_STATUS_REQUEST",
+    "HEART_BEAT_REQUEST",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessageType(MessageType e) {
-  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_SCANSYNC_CONFIGURATION)) return "";
+  if (flatbuffers::IsOutRange(e, MessageType_NONE, MessageType_HEART_BEAT_REQUEST)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessageType()[index];
 }
@@ -599,6 +605,8 @@ struct ScanConfigurationDataT : public flatbuffers::NativeTable {
   uint32_t saturation_threshold = 0;
   uint32_t saturation_percent = 0;
   std::vector<std::unique_ptr<joescan::schema::client::CameraLaserConfigurationT>> camera_laser_configurations{};
+  bool idle_scan_enabled = false;
+  uint64_t idle_scan_period_ns = 0;
 };
 
 struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -611,7 +619,9 @@ struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
     VT_LASER_DETECTION_THRESHOLD = 12,
     VT_SATURATION_THRESHOLD = 14,
     VT_SATURATION_PERCENT = 16,
-    VT_CAMERA_LASER_CONFIGURATIONS = 18
+    VT_CAMERA_LASER_CONFIGURATIONS = 18,
+    VT_IDLE_SCAN_ENABLED = 20,
+    VT_IDLE_SCAN_PERIOD_NS = 22
   };
   uint32_t data_type_mask() const {
     return GetField<uint32_t>(VT_DATA_TYPE_MASK, 0);
@@ -634,6 +644,12 @@ struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
   const flatbuffers::Vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>> *camera_laser_configurations() const {
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>> *>(VT_CAMERA_LASER_CONFIGURATIONS);
   }
+  bool idle_scan_enabled() const {
+    return GetField<uint8_t>(VT_IDLE_SCAN_ENABLED, 0) != 0;
+  }
+  uint64_t idle_scan_period_ns() const {
+    return GetField<uint64_t>(VT_IDLE_SCAN_PERIOD_NS, 0);
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_DATA_TYPE_MASK) &&
@@ -645,6 +661,8 @@ struct ScanConfigurationData FLATBUFFERS_FINAL_CLASS : private flatbuffers::Tabl
            VerifyOffset(verifier, VT_CAMERA_LASER_CONFIGURATIONS) &&
            verifier.VerifyVector(camera_laser_configurations()) &&
            verifier.VerifyVectorOfTables(camera_laser_configurations()) &&
+           VerifyField<uint8_t>(verifier, VT_IDLE_SCAN_ENABLED) &&
+           VerifyField<uint64_t>(verifier, VT_IDLE_SCAN_PERIOD_NS) &&
            verifier.EndTable();
   }
   ScanConfigurationDataT *UnPack(const flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -677,6 +695,12 @@ struct ScanConfigurationDataBuilder {
   void add_camera_laser_configurations(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>>> camera_laser_configurations) {
     fbb_.AddOffset(ScanConfigurationData::VT_CAMERA_LASER_CONFIGURATIONS, camera_laser_configurations);
   }
+  void add_idle_scan_enabled(bool idle_scan_enabled) {
+    fbb_.AddElement<uint8_t>(ScanConfigurationData::VT_IDLE_SCAN_ENABLED, static_cast<uint8_t>(idle_scan_enabled), 0);
+  }
+  void add_idle_scan_period_ns(uint64_t idle_scan_period_ns) {
+    fbb_.AddElement<uint64_t>(ScanConfigurationData::VT_IDLE_SCAN_PERIOD_NS, idle_scan_period_ns, 0);
+  }
   explicit ScanConfigurationDataBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -696,8 +720,11 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(
     uint32_t laser_detection_threshold = 0,
     uint32_t saturation_threshold = 0,
     uint32_t saturation_percent = 0,
-    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>>> camera_laser_configurations = 0) {
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>>> camera_laser_configurations = 0,
+    bool idle_scan_enabled = false,
+    uint64_t idle_scan_period_ns = 0) {
   ScanConfigurationDataBuilder builder_(_fbb);
+  builder_.add_idle_scan_period_ns(idle_scan_period_ns);
   builder_.add_camera_laser_configurations(camera_laser_configurations);
   builder_.add_saturation_percent(saturation_percent);
   builder_.add_saturation_threshold(saturation_threshold);
@@ -705,6 +732,7 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(
   builder_.add_scan_period_ns(scan_period_ns);
   builder_.add_data_stride(data_stride);
   builder_.add_data_type_mask(data_type_mask);
+  builder_.add_idle_scan_enabled(idle_scan_enabled);
   return builder_.Finish();
 }
 
@@ -716,7 +744,9 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationDataDir
     uint32_t laser_detection_threshold = 0,
     uint32_t saturation_threshold = 0,
     uint32_t saturation_percent = 0,
-    const std::vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>> *camera_laser_configurations = nullptr) {
+    const std::vector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>> *camera_laser_configurations = nullptr,
+    bool idle_scan_enabled = false,
+    uint64_t idle_scan_period_ns = 0) {
   auto camera_laser_configurations__ = camera_laser_configurations ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>>(*camera_laser_configurations) : 0;
   return joescan::schema::client::CreateScanConfigurationData(
       _fbb,
@@ -726,7 +756,9 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationDataDir
       laser_detection_threshold,
       saturation_threshold,
       saturation_percent,
-      camera_laser_configurations__);
+      camera_laser_configurations__,
+      idle_scan_enabled,
+      idle_scan_period_ns);
 }
 
 flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(flatbuffers::FlatBufferBuilder &_fbb, const ScanConfigurationDataT *_o, const flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1766,6 +1798,8 @@ inline void ScanConfigurationData::UnPackTo(ScanConfigurationDataT *_o, const fl
   { auto _e = saturation_threshold(); _o->saturation_threshold = _e; }
   { auto _e = saturation_percent(); _o->saturation_percent = _e; }
   { auto _e = camera_laser_configurations(); if (_e) { _o->camera_laser_configurations.resize(_e->size()); for (flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->camera_laser_configurations[_i] = std::unique_ptr<joescan::schema::client::CameraLaserConfigurationT>(_e->Get(_i)->UnPack(_resolver)); } } }
+  { auto _e = idle_scan_enabled(); _o->idle_scan_enabled = _e; }
+  { auto _e = idle_scan_period_ns(); _o->idle_scan_period_ns = _e; }
 }
 
 inline flatbuffers::Offset<ScanConfigurationData> ScanConfigurationData::Pack(flatbuffers::FlatBufferBuilder &_fbb, const ScanConfigurationDataT* _o, const flatbuffers::rehasher_function_t *_rehasher) {
@@ -1783,6 +1817,8 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(fl
   auto _saturation_threshold = _o->saturation_threshold;
   auto _saturation_percent = _o->saturation_percent;
   auto _camera_laser_configurations = _o->camera_laser_configurations.size() ? _fbb.CreateVector<flatbuffers::Offset<joescan::schema::client::CameraLaserConfiguration>> (_o->camera_laser_configurations.size(), [](size_t i, _VectorArgs *__va) { return CreateCameraLaserConfiguration(*__va->__fbb, __va->__o->camera_laser_configurations[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _idle_scan_enabled = _o->idle_scan_enabled;
+  auto _idle_scan_period_ns = _o->idle_scan_period_ns;
   return joescan::schema::client::CreateScanConfigurationData(
       _fbb,
       _data_type_mask,
@@ -1791,7 +1827,9 @@ inline flatbuffers::Offset<ScanConfigurationData> CreateScanConfigurationData(fl
       _laser_detection_threshold,
       _saturation_threshold,
       _saturation_percent,
-      _camera_laser_configurations);
+      _camera_laser_configurations,
+      _idle_scan_enabled,
+      _idle_scan_period_ns);
 }
 
 inline ImageRequestDataT *ImageRequestData::UnPack(const flatbuffers::resolver_function_t *_resolver) const {

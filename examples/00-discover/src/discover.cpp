@@ -67,7 +67,7 @@ static std::string NetToString(uint32_t net)
 }
 
 /**
- * @brief Prints the contents of a `jsScanHeadStatus` data type to standard out.
+ * @brief Prints the contents of a `jsDiscovered` to standard out.
  *
  * @param stat Reference to scan head status to print.
  */
@@ -100,10 +100,25 @@ void PrintScanHeadDiscovered(jsDiscovered &d)
   }
 }
 
+/**
+ * @brief Prints the contents of a `jsScanSyncDiscovered` to standard out.
+ *
+ * @param stat Reference to scan head status to print.
+ */
+void PrintScanSyncDiscovered(jsScanSyncDiscovered &d)
+{
+  std::cout << d.serial_number << "\n";
+  std::cout << "  Firmware v" << d.firmware_version_major << "."
+                              << d.firmware_version_minor << "."
+                              << d.firmware_version_patch << "\n";
+  std::cout << "  IP Address " << NetToString(d.ip_addr) << "\n";
+}
+
 int main(int argc, char *argv[])
 {
   jsScanSystem scan_system = 0;
-  jsDiscovered *discovered = nullptr;
+  jsDiscovered *scanheads_discovered = nullptr;
+  jsScanSyncDiscovered *scansyncs_discovered = nullptr;
   int32_t r = 0;
 
   try {
@@ -121,21 +136,40 @@ int main(int argc, char *argv[])
     // scan heads that came online late due to delays in powering up hardware.
     r = jsScanSystemDiscover(scan_system);
     if (0 > r) {
-      throw ApiError("failed to discover scan heads", r);
+      throw ApiError("failed to discover JS-50 scan heads", r);
     }
 
-    // The returned value, if non-negative, indicates how many scan heads were
-    // found on the network.
+    // The returned value, if non-negative, indicates how many JS-50 scan heads
+    // were found on the network.
     std::cout << "Discovered " << r << " JS-50 scan heads" << std::endl;
-    discovered = new jsDiscovered[r];
+    scanheads_discovered = new jsDiscovered[r];
 
-    r = jsScanSystemGetDiscovered(scan_system, discovered, r);
+    r = jsScanSystemGetDiscovered(scan_system, scanheads_discovered, r);
     if (0 > r) {
-      throw ApiError("failed to get discover scan heads", r);
+      throw ApiError("failed to get discovered scan heads", r);
     }
 
     for (int n = 0; n < r; n++) {
-      PrintScanHeadDiscovered(discovered[n]);
+      PrintScanHeadDiscovered(scanheads_discovered[n]);
+    }
+
+    r = jsScanSystemScanSyncDiscover(scan_system);
+    if (0 > r) {
+      throw ApiError("failed to discover ScanSyncs", r);
+    }
+
+    // The returned value, if non-negative, indicates how many ScanSyncs were
+    // found on the network.
+    std::cout << "Discovered " << r << " ScanSyncs" << std::endl;
+    scansyncs_discovered = new jsScanSyncDiscovered[r];
+
+    r = jsScanSystemGetScanSyncDiscovered(scan_system, scansyncs_discovered, r);
+    if (0 > r) {
+      throw ApiError("failed to get discovered ScanSyncs", r);
+    }
+
+    for (int n = 0; n < r; n++) {
+      PrintScanSyncDiscovered(scansyncs_discovered[n]);
     }
   } catch (ApiError &e) {
     std::cout << "ERROR: " << e.what() << std::endl;
@@ -151,6 +185,14 @@ int main(int argc, char *argv[])
 
   // Clean up data allocated by the scan manager.
   jsScanSystemFree(scan_system);
+
+  if (nullptr != scanheads_discovered) {
+    delete scanheads_discovered;
+  }
+
+  if (nullptr != scansyncs_discovered) {
+    delete scansyncs_discovered;
+  }
 
   return r;
 }

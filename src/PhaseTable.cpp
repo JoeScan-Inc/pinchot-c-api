@@ -2,6 +2,7 @@
 
 #include "PhaseTable.hpp"
 #include "ScanHead.hpp"
+#include "error_extended_macros.h"
 
 using namespace joescan;
 
@@ -28,6 +29,8 @@ PhaseTable::GetScheduledPairsPerScanHead() const
 
 PhaseTableCalculated PhaseTable::CalculatePhaseTable()
 {
+  CLEAR_ERROR();
+
   PhaseTableCalculated table_calculated;
 
   if (m_table.size() == 0) {
@@ -157,7 +160,7 @@ PhaseTableCalculated PhaseTable::CalculatePhaseTable()
 
   if (total_duration_us < min_duration_us) {
     uint32_t delta = min_duration_us - total_duration_us;
-    uint32_t size = table_calculated.phases.size();
+    uint32_t size = (uint32_t) table_calculated.phases.size();
     // integer round up
     uint32_t offset = (delta + (size - 1)) / size;
 
@@ -178,6 +181,7 @@ uint32_t PhaseTable::GetNumberOfPhases() const
 
 void PhaseTable::Reset()
 {
+  CLEAR_ERROR();
   m_table.clear();
   m_scan_head_count.clear();
   m_has_duplicate_elements = false;
@@ -186,6 +190,7 @@ void PhaseTable::Reset()
 
 void PhaseTable::CreatePhase()
 {
+  CLEAR_ERROR();
   std::vector<PhasedElement> phase;
   m_table.push_back(phase);
   m_is_dirty = true;
@@ -194,14 +199,16 @@ void PhaseTable::CreatePhase()
 int PhaseTable::AddToLastPhaseEntry(ScanHead *scan_head, jsCamera camera,
                                     jsScanHeadConfiguration *cfg)
 {
+  CLEAR_ERROR();
+
   if (0 == m_table.size()) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Empty phase table", JS_ERROR_INVALID_ARGUMENT);
   }
 
   uint32_t phase = static_cast<uint32_t>(m_table.size()) - 1;
   jsLaser laser = scan_head->GetPairedLaser(camera);
   if (JS_LASER_INVALID == laser) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
   }
 
   return AddToPhaseEntryCommon(phase, scan_head, camera, laser, cfg);
@@ -210,14 +217,16 @@ int PhaseTable::AddToLastPhaseEntry(ScanHead *scan_head, jsCamera camera,
 int PhaseTable::AddToLastPhaseEntry(ScanHead *scan_head, jsLaser laser,
                                     jsScanHeadConfiguration *cfg)
 {
+  CLEAR_ERROR();
+
   if (0 == m_table.size()) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Empty phase table", JS_ERROR_INVALID_ARGUMENT);
   }
 
   uint32_t phase = static_cast<uint32_t>(m_table.size()) - 1;
   jsCamera camera = scan_head->GetPairedCamera(laser);
   if (JS_CAMERA_INVALID == camera) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
   }
 
   return AddToPhaseEntryCommon(phase, scan_head, camera, laser, cfg);
@@ -227,13 +236,15 @@ int PhaseTable::AddToPhaseEntryCommon(uint32_t phase, ScanHead *scan_head,
                                       jsCamera camera, jsLaser laser,
                                       jsScanHeadConfiguration *cfg)
 {
+  CLEAR_ERROR();
+
   if (m_table.size() <= phase) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid phase", JS_ERROR_INVALID_ARGUMENT);
   }
 
   if (m_scan_head_count.find(scan_head) != m_scan_head_count.end()) {
-    if (m_scan_head_count[scan_head] >= scan_head->GetMaxScanPairs()) {
-      return JS_ERROR_NO_MORE_ROOM;
+    if (m_scan_head_count[scan_head] >= scan_head->GetScanPairsMax()) {
+      RETURN_ERROR("Phase entries exceeded", JS_ERROR_NO_MORE_ROOM);
     }
 
     for (auto &p : m_table) {
@@ -253,7 +264,7 @@ int PhaseTable::AddToPhaseEntryCommon(uint32_t phase, ScanHead *scan_head,
 
   for (auto &el : m_table[phase]) {
     if ((el.scan_head == scan_head) && (el.camera == camera)) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      RETURN_ERROR("Duplicate phase element", JS_ERROR_INVALID_ARGUMENT);
     }
   }
 
@@ -268,7 +279,8 @@ int PhaseTable::AddToPhaseEntryCommon(uint32_t phase, ScanHead *scan_head,
     el.is_cfg_unique = false;
   } else {
     if (!(scan_head->IsConfigurationValid(*cfg))) {
-      return JS_ERROR_INVALID_ARGUMENT;
+      RETURN_ERROR("Invalid scan head configuration for phase",
+                   JS_ERROR_INVALID_ARGUMENT);
     }
 
     el.is_cfg_unique = true;
@@ -281,17 +293,23 @@ int PhaseTable::AddToPhaseEntryCommon(uint32_t phase, ScanHead *scan_head,
   return 0;
 }
 
-bool PhaseTable::HasDuplicateElements()
+bool PhaseTable::HasDuplicateElements() const
 {
   return m_has_duplicate_elements;
 }
 
-bool PhaseTable::IsDirty()
+bool PhaseTable::IsDirty() const
 {
   return m_is_dirty;
 }
 
 void PhaseTable::ClearDirty()
 {
+  CLEAR_ERROR();
   m_is_dirty = false;
+}
+
+std::string PhaseTable::GetErrorExtended() const
+{
+  return m_error_extended_str;
 }

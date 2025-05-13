@@ -79,15 +79,12 @@ void AlignmentParams::CalculateTransform()
   t.shift_y_1000 = m_alignment.shift_y * 1000.0;
 
   t.camera_to_mill_xx = cos_yaw * cos_roll * t.camera_to_mill_scale;
-  t.camera_to_mill_xy = sin_roll * t.camera_to_mill_scale;
+  t.camera_to_mill_xy = -sin_roll * t.camera_to_mill_scale;
   t.camera_to_mill_yx = cos_yaw * sin_roll * t.camera_to_mill_scale;
   t.camera_to_mill_yy = cos_roll * t.camera_to_mill_scale;
   t.mill_to_camera_xx = cos_neg_yaw * cos_neg_roll / t.camera_to_mill_scale;
-  t.mill_to_camera_xy = cos_neg_yaw * sin_neg_roll / t.camera_to_mill_scale;
+  t.mill_to_camera_xy = cos_neg_yaw * -sin_neg_roll / t.camera_to_mill_scale;
   t.mill_to_camera_yx = sin_neg_roll / t.camera_to_mill_scale;
   t.mill_to_camera_yy = cos_neg_roll / t.camera_to_mill_scale;
 
-  // add -1 term to variables
-  t.camera_to_mill_xy *= -1;
-  t.mill_to_camera_xy *= -1;
 }

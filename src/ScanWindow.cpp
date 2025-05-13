@@ -13,15 +13,21 @@
 
 using namespace joescan;
 
+ScanWindow::ScanWindow(): m_top(0.0), m_bottom(0.0), m_left(0.0),
+                          m_right(0.0), m_type(JS_SCAN_WINDOW_UNCONSTRAINED)
+{
+}
+
 ScanWindow::ScanWindow(double top, double bottom, double left, double right)
-  : m_top(top), m_bottom(bottom), m_left(left), m_right(right)
+  : m_top(top), m_bottom(bottom), m_left(left), m_right(right),
+  m_type(JS_SCAN_WINDOW_RECTANGULAR)
 {
   if (top <= bottom) {
-    throw std::range_error("window top must be greater than window bottom");
+    throw std::range_error("Window top must be greater than window bottom");
   }
 
   if (right <= left) {
-    throw std::range_error("window right must be greater than window left");
+    throw std::range_error("Window right must be greater than window left");
   }
 
   // convert from units to 1/1000 of a unit
@@ -46,11 +52,28 @@ ScanWindow::ScanWindow(double top, double bottom, double left, double right)
   m_constraints.push_back(
     WindowConstraint(Point2D<int64_t>(left1000, bottom1000),
                      Point2D<int64_t>(left1000, top1000)));
+  
+  jsCoordinate point;
+  point.x = left;
+  point.y = top;
+  m_coordinates.push_back(point);
+
+  point.x = right;
+  point.y = top;
+  m_coordinates.push_back(point);
+
+  point.x = right;
+  point.y = bottom;
+  m_coordinates.push_back(point);
+
+  point.x = left;
+  point.y = bottom;
+  m_coordinates.push_back(point);
 }
 
 ScanWindow::ScanWindow(std::vector<jsCoordinate> coordinates)
   : m_coordinates(coordinates), m_top(0.0), m_bottom(0.0), m_left(0.0),
-    m_right(0.0)
+    m_right(0.0), m_type(JS_SCAN_WINDOW_POLYGONAL)
 {
   for (uint32_t n = 0; n < (coordinates.size() - 1); n++) {
     int32_t x0 = (int32_t) (coordinates[n + 0].x * 1000);
@@ -80,6 +103,11 @@ std::vector<WindowConstraint> ScanWindow::GetConstraints() const
 std::vector<jsCoordinate> ScanWindow::GetCoordinates() const
 {
   return m_coordinates;
+}
+
+jsScanWindowType ScanWindow::GetType() const
+{
+  return m_type;
 }
 
 double ScanWindow::GetTop() const

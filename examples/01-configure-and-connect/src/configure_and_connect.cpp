@@ -206,7 +206,7 @@ int main(int argc, char *argv[])
     int32_t id = 0;
     scan_head = jsScanSystemCreateScanHead(scan_system, serial_number, id);
     if (0 > scan_head) {
-      r = scan_head;
+      r = (int32_t) scan_head;
       throw ApiError("failed to create scan head", r);
     }
 
@@ -228,9 +228,6 @@ int main(int argc, char *argv[])
     // this example, we'll use some generic values not specifically set for any
     // particular scenario.
     jsScanHeadConfiguration config;
-    config.camera_exposure_time_min_us = 10000;
-    config.camera_exposure_time_def_us = 47000;
-    config.camera_exposure_time_max_us = 900000;
     config.laser_on_time_min_us = 100;
     config.laser_on_time_def_us = 100;
     config.laser_on_time_max_us = 1000;

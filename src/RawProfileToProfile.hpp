@@ -12,6 +12,7 @@
 
 namespace joescan {
 
+/// Copies the contents in a `jsRawProfile` and converts them into a `jsProfile`
 inline void RawProfileToProfile(jsRawProfile *src, jsProfile *dst)
 {
   dst->scan_head_id = src->scan_head_id;
@@ -25,8 +26,10 @@ inline void RawProfileToProfile(jsRawProfile *src, jsProfile *dst)
   dst->packets_received = src->packets_received;
   dst->packets_expected = src->packets_expected;
   dst->num_encoder_values = src->num_encoder_values;
+  // Note: encoder values beyond `num_encoder_values` should be set to 
+  // `JS_SCANSYNC_INVALID_ENCODER` in the raw profile
   memcpy(dst->encoder_values, src->encoder_values,
-         src->num_encoder_values * sizeof(uint64_t));
+         JS_ENCODER_MAX * sizeof(uint64_t));
 
   unsigned int stride = 0;
   unsigned int len = 0;

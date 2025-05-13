@@ -110,7 +110,7 @@ TCPSocket::TCPSocket(std::string client_name, uint32_t client_ip, uint32_t ip,
   }
 
   r = SelectWaitWrite();
-  if ((0 != r) && (EINPROGRESS != errno)) {
+  if ((0 >= r) && (EINPROGRESS != errno)) {
     NetworkInterface::Close();
     std::string e = NETWORK_TRACE;
     throw std::runtime_error(e);
@@ -159,7 +159,7 @@ int TCPSocket::Send(uint8_t *buf, uint32_t len)
   errno = 0;
   do {
     r = SelectWaitWrite();
-    if (0 != r) {
+    if (0 >= r) {
       return r;
     }
 
@@ -189,7 +189,7 @@ int TCPSocket::Send(uint8_t *buf, uint32_t len)
   n = 0;
   do {
     r = SelectWaitWrite();
-    if (0 != r) {
+    if (0 >= r) {
       return r;
     }
 

@@ -10,7 +10,8 @@
 
 #include "AlignmentParams.hpp"
 #include "PhaseTable.hpp"
-#include "ScanSync.hpp"
+#include "ScanSyncManager.hpp"
+#include "Version.hpp"
 #include "joescan_pinchot.h"
 
 #include <condition_variable>
@@ -27,7 +28,7 @@ class ScanManager {
   /**
    * @brief Creates a new scan manager object;
    */
-  ScanManager(jsUnits units, ScanSync *scansync);
+  ScanManager(jsUnits units, ScanSyncManager *scansync);
 
   /**
    * @brief Destructor for the `ScanManager` object.
@@ -39,7 +40,7 @@ class ScanManager {
    *
    * @returns The UID of the scan system.
    */
-  uint32_t GetUID();
+  uint32_t GetUID() const;
 
   /**
    * @brief Performs broadcast discover on all available network interfaces.
@@ -60,14 +61,13 @@ class ScanManager {
    */
   int32_t ScanHeadsDiscovered(jsDiscovered *results, uint32_t max_results);
 
-  /**
-   * @brief Returns a pointer to the `PhaseTable` object used by the
-   * `ScanSystem` to determine how scanning is to occur during a scan period.
-   *
-   * @return A pointer to the `PhaseTable`.
-   */
-  PhaseTable* GetPhaseTable();
+  int32_t DiscoverScanSyncs(jsScanSyncDiscovered *discovered,
+                            uint32_t max_results);
 
+  int32_t SetScanSyncEncoder(uint32_t serial_main, uint32_t serial_aux1,
+                             uint32_t serial_aux2);
+  int32_t GetScanSyncEncoder(uint32_t *serial_main, uint32_t *serial_aux1,
+                             uint32_t *serial_aux2);
   /**
    * @brief Creates a `ScanHead` object used to receive scan data.
    *
@@ -112,8 +112,9 @@ class ScanManager {
 
   /**
    * @brief Removes all created `ScanHead` objects from use.
+   * @return `0` on success, negative value mapping to `jsError` on error.
    */
-  void RemoveAllScanHeads();
+  int32_t RemoveAllScanHeads();
 
   /**
    * @brief Returns the total number of `ScanHead` objects associated with
@@ -121,7 +122,45 @@ class ScanManager {
    *
    * @return Total number of `ScanHeads`.
    */
-  uint32_t GetNumberScanners();
+  uint32_t GetNumberScanners() const;
+
+  int32_t PhaseClearAll();
+  int32_t PhaseCreate();
+  int32_t PhaseInsert(ScanHead *scan_head, jsCamera camera);
+  int32_t PhaseInsert(ScanHead *scan_head, jsLaser laser);
+  int32_t PhaseInsert(ScanHead *scan_head, jsCamera camera,
+                      jsScanHeadConfiguration *config);
+  int32_t PhaseInsert(ScanHead *scan_head, jsLaser laser,
+                      jsScanHeadConfiguration *config);
+
+  /**
+   * @brief Enables and sets the idle scan period for the scan system.
+   * 
+   * @param period_us The idle scan period in microseconds.
+   * @return `0` on success, negative value mapping to `jsError` on error.
+  */
+  int32_t SetIdleScanPeriod(uint32_t period_us);
+
+  /**
+   * @brief Disables idle scanning for the scan system.
+   * 
+   * @return `0` on success, negative value mapping to `jsError` on error.
+  */
+  int32_t DisableIdleScanning();
+
+  /**
+   * @brief Gets the idle scan period for the scan system.
+   *
+   * @return The idle scan period in microseconds for the system.
+   */
+  uint32_t GetIdleScanPeriod();
+
+  /**
+   * @brief Gets the idle scan enabled state for the scan system.
+   * 
+   * @return The idle scan enabled state for the system.
+  */
+  bool IsIdleScanningEnabled();
 
   /**
    * @brief Attempts to connect to all `ScanHead` objects that were previously
@@ -136,7 +175,7 @@ class ScanManager {
    * @brief Disconnects all `ScanHead` objects that were previously connected
    * from calling `Connect`.
    */
-  void Disconnect();
+  int32_t Disconnect();
 
   /**
    * @brief Starts scanning on all `ScanHead` objects that were connected
@@ -203,10 +242,15 @@ class ScanManager {
 
   bool IsConfigured() const;
 
+  std::string GetErrorExtended() const;
+
  private:
   enum SystemState { Disconnected, Connected, Scanning, Close };
 
+  int32_t BroadcastDiscover(
+    std::map<uint32_t, std::shared_ptr<jsDiscovered>> &discovered);
   void KeepAliveThread();
+  void HeartBeatThread();
 
   // If more profiles queued than threshold, assume partial frame ready to read
   const uint32_t kFrameSizeThreshold = 50;
@@ -214,22 +258,32 @@ class ScanManager {
   std::map<uint32_t, std::shared_ptr<jsDiscovered>> m_serial_to_discovered;
   std::map<uint32_t, ScanHead*> m_serial_to_scan_head;
   std::map<uint32_t, ScanHead*> m_id_to_scan_head;
+  std::map<jsEncoder, uint32_t> m_encoder_to_serial;
+  std::string m_error_extended_str;
   std::thread m_keep_alive_thread;
+  std::thread m_heart_beat_thread;
   std::condition_variable m_condition;
   std::mutex m_mutex;
 
-  ScanSync *m_scansync;
+  ScanSyncManager *m_scansync;
   PhaseTable m_phase_table;
   SystemState m_state;
   jsUnits m_units;
+
+  SemanticVersion m_version_scan_head_lowest;
+  SemanticVersion m_version_scan_head_highest;
 
   static uint32_t m_uid_count;
   uint32_t m_uid;
   uint32_t m_min_scan_period_us;
   uint32_t m_scan_period_us;
+  uint32_t m_idle_scan_period_us;
+  uint32_t m_frame_current_sequence;
   bool m_is_frame_scanning;
   bool m_is_frame_ready;
-  uint32_t m_frame_current_sequence;
+  bool m_is_user_encoder_map;
+  bool m_is_encoder_dirty;
+  bool m_is_idle_scan_enabled;
 };
 
 inline bool ScanManager::IsConnected() const

@@ -6,8 +6,6 @@
 
 #include "flatbuffers/flatbuffers.h"
 
-#include "ScanHeadType_generated.h"
-
 namespace joescan {
 namespace schema {
 namespace client {

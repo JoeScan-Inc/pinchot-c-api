@@ -1,5 +1,5 @@
-cmake_minimum_required (VERSION 3.1)
-project (jssetup_config_parser)
+cmake_minimum_required(VERSION 3.8)
+project(jssetup_config_parser)
 
 file(GLOB PROJECT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 add_executable(${CMAKE_PROJECT_NAME} ${PROJECT_SOURCES})
@@ -10,5 +10,5 @@ include(PinchotBuildApplication)
 
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/json-3.3.7/
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/json-3.11.2/
 )

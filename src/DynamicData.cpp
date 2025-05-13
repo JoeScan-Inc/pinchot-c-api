@@ -260,6 +260,14 @@ const ScanWindow* DynamicData::GetWindow(
   return m_map_window[pair].get();
 }
 
+jsScanWindowType DynamicData::GetWindowType(
+  jsCamera camera,
+  jsLaser laser)
+{
+  std::pair<jsCamera, jsLaser> pair(camera, laser);
+  return m_map_window[pair]->GetType();
+}
+
 bool DynamicData::IsDirty()
 {
   return m_is_dirty;

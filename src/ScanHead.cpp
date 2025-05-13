@@ -15,9 +15,11 @@
 #include "NetworkInterface.hpp"
 #include "NetworkTypes.hpp"
 #include "RawProfileToProfile.hpp"
+#include "error_extended_macros.h"
 #include "js50_spec_bin.h"
+#include <algorithm>
 
-using namespace joescan;
+#define INVALID_DOUBLE(d) (std::isinf((d)) || std::isnan((d)))
 
 #define CAMERA_GET_LASER(camera, laser) \
   if (m_model.IsLaserPrimary()) { \
@@ -36,6 +38,8 @@ using namespace joescan;
   if (JS_CAMERA_INVALID == (camera)) { \
     return JS_ERROR_INVALID_ARGUMENT; \
   }
+
+using namespace joescan;
 
 ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
   : m_scan_manager(manager),
@@ -57,7 +61,8 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
     m_last_sequence(0),
     m_is_receive_thread_active(false),
     m_is_frame_scanning(false),
-    m_is_scanning(false)
+    m_is_scanning(false),
+    m_is_heart_beating(false)
 {
   m_packet_buf = new uint8_t[kMaxPacketSize];
   m_packet_buf_len = kMaxPacketSize;
@@ -81,8 +86,8 @@ ScanHead::~ScanHead()
 
 int ScanHead::Connect(uint32_t timeout_s)
 {
-  using namespace schema::client;
-  SOCKET fd = -1;
+  CLEAR_ERROR();
+
   int r = 0;
 
   m_mutex.lock();
@@ -90,8 +95,8 @@ int ScanHead::Connect(uint32_t timeout_s)
                   new TCPSocket(m_client_name, m_client_ip_address,
                                 m_ip_address, kScanServerCtrlPort, timeout_s));
 
+  using namespace schema::client;
   m_builder.Clear();
-
   std::string api_version_string = API_VERSION_FULL;
   auto notes_offset = m_builder.CreateVectorOfStrings(
     {std::string("C API"), api_version_string});
@@ -108,69 +113,84 @@ int ScanHead::Connect(uint32_t timeout_s)
   m_builder.Finish(msg_offset);
 
   r = m_sock_ctrl->Send(m_builder);
-  if (0 != r) {
+  if (JS_ERROR_NETWORK == r) {
     m_mutex.unlock();
-    return r;
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    m_mutex.unlock();
+    RETURN_ERROR("Unknown error", r);
   }
 
   // manually unlock; calling GetStatusMessage will lock the mutex again
   m_mutex.unlock();
 
+  m_is_heart_beating = true;
+
   StatusMessage status;
   r = GetStatusMessage(&status);
   if (0 != r) {
-    return r;
+    return r; // rely on previous function to set extended error
   }
 
-  if (0 == r) {
-    m_mutex.lock();
-    m_is_receive_thread_active = true;
-    std::thread receive_thread(&ScanHead::ThreadScanningReceive, this);
-    m_receive_thread = std::move(receive_thread);
-    m_mutex.unlock();
-  }
+  m_mutex.lock();
+  m_is_receive_thread_active = true;
+  std::thread receive_thread(&ScanHead::ThreadScanningReceive, this);
+  m_receive_thread = std::move(receive_thread);
+  m_mutex.unlock();
 
   return 0;
 }
 
 int ScanHead::Disconnect(void)
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
 
-  m_mutex.lock();
-
+  std::scoped_lock<std::mutex> lk(m_mutex);
   m_is_receive_thread_active = false;
   m_receive_thread.join();
 
+  using namespace schema::client;
   m_builder.Clear();
   auto msg_offset =
     CreateMessageClient(m_builder, MessageType_DISCONNECT, MessageData_NONE);
   m_builder.Finish(msg_offset);
   int r = m_sock_ctrl->Send(m_builder);
   m_sock_ctrl->Close();
-  m_mutex.unlock();
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
 
-  return r;
+  return 0;
 }
 
 int ScanHead::SendScanConfiguration(uint32_t period_us, jsDataFormat fmt,
                                     bool is_frame_scanning)
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
+
   std::unique_lock<std::mutex> lock(m_mutex);
 
   if (0 == m_scan_pairs.size()) {
-    // TODO: Do we return error? Or do we just silently let it fail?
-    return 0;
+    RETURN_ERROR("No camera laser pairs defined", JS_ERROR_INTERNAL);
   }
 
-  if ((period_us > m_model.GetMaxScanPeriod()) ||
-      (period_us < m_model.GetMinScanPeriod())) {
-    return JS_ERROR_INVALID_ARGUMENT;
+  uint32_t period_us_max = m_model.GetMaxScanPeriod();
+  uint32_t period_us_min = m_model.GetMinScanPeriod();
+  if (period_us > period_us_max) {
+    RETURN_ERROR("Requested scan period " + std::to_string(period_us) +
+                 " is greater than maximum " + std::to_string(period_us_max),
+                 JS_ERROR_INVALID_ARGUMENT);
+  } else if (period_us < period_us_min) {
+    RETURN_ERROR("Requested scan period " + std::to_string(period_us) +
+                 " is greater than maximum " + std::to_string(period_us_min),
+                 JS_ERROR_INVALID_ARGUMENT);
   }
 
   if (is_frame_scanning && !m_firmware_version.IsCompatible(16, 2, 0)) {
-    return JS_ERROR_VERSION_COMPATIBILITY;
+    RETURN_ERROR("Frame scanning requires version 16.2.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
   }
 
   uint32_t data_type_mask = 0;
@@ -204,6 +224,7 @@ int ScanHead::SendScanConfiguration(uint32_t period_us, jsDataFormat fmt,
       return JS_ERROR_INVALID_ARGUMENT;
   }
 
+  using namespace schema::client;
   const jsScanHeadConfiguration *config = m_data->GetConfiguration();
   ScanConfigurationDataT cfg;
   cfg.data_type_mask = data_type_mask;
@@ -212,7 +233,8 @@ int ScanHead::SendScanConfiguration(uint32_t period_us, jsDataFormat fmt,
   cfg.laser_detection_threshold = config->laser_detection_threshold;
   cfg.saturation_threshold = config->saturation_threshold;
   cfg.saturation_percent = config->saturation_percentage;
-
+  cfg.idle_scan_enabled = m_scan_manager.IsIdleScanningEnabled();
+  cfg.idle_scan_period_ns = m_scan_manager.GetIdleScanPeriod() * 1000;
 
   for (auto &el : m_scan_pairs) {
     jsCamera camera = el.camera;
@@ -247,21 +269,25 @@ int ScanHead::SendScanConfiguration(uint32_t period_us, jsDataFormat fmt,
                         MessageData_ScanConfigurationData, data_offset.Union());
   m_builder.Finish(msg_offset);
   int r = m_sock_ctrl->Send(m_builder);
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
 
   m_format = fmt;
 
-  return r;
+  return 0;
 }
 
 int ScanHead::SendScanAlignmentValue()
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
+
   std::unique_lock<std::mutex> lock(m_mutex);
-  int r = 0;
 
   if (0 == m_scan_pairs.size()) {
-    // TODO: Do we return error? Or do we just silently let it fail?
-    return 0;
+    RETURN_ERROR("No camera laser pairs defined", JS_ERROR_INTERNAL);
   }
 
   for (auto &el : m_scan_pairs) {
@@ -275,6 +301,7 @@ int ScanHead::SendScanAlignmentValue()
       continue;
     }
 
+    using namespace schema::client;
     StoreAlignmentDataT alignment_data;
     alignment_data.camera_port = m_model.CameraIdToPort(camera);
     alignment_data.laser_port = m_model.LaserIdToPort(laser);
@@ -308,43 +335,134 @@ int ScanHead::SendScanAlignmentValue()
                           store_info_data_offset.Union());
 
     m_builder.Finish(msg_offset);
-    r = m_sock_ctrl->Send(m_builder);
-    if (0 != r) {
-      return r;
+    int r = m_sock_ctrl->Send(m_builder);
+    if (JS_ERROR_NETWORK == r) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
     }
   }
 
-  return r;
+  return 0;
 }
 
 int ScanHead::SendKeepAlive()
 {
-  using namespace schema::client;
-
+  // 16.3 and newer use Heartbeat as keep alive
+  if (m_firmware_version.IsCompatible(16, 3, 0)){
+    // scan head doesn't support, don't send
+    RETURN_ERROR("Deprecated on firmware 16.3.0 and higher",
+      JS_ERROR_VERSION_COMPATIBILITY);
+  }
+  // Don't clear or set error for this function as it is only used internally
+  // by a separate non-user thread to send periodic keep alive messages to
+  // the scan head.
   std::unique_lock<std::mutex> lock(m_mutex);
+
+  using namespace schema::client;
   m_builder.Clear();
   auto msg_offset =
     CreateMessageClient(m_builder, MessageType_KEEP_ALIVE, MessageData_NONE);
   m_builder.Finish(msg_offset);
   int r = m_sock_ctrl->Send(m_builder);
+  if (0 > r) {
+    return r; // Non-user function, don't set error.
+  }
 
-  return r;
+  return 0;
 }
 
-int ScanHead::StartScanning(uint64_t start_time_ns, bool is_frame_scanning)
+int ScanHead::GetHeartBeat(struct timeval *timeout)
 {
-  using namespace schema::client;
+  static const int32_t buf_len = 64;
+  static uint8_t buf[buf_len];
+  int r = -1;
+
+  if (!m_firmware_version.IsCompatible(16, 3, 0)) {
+    // scan head doesn't support, don't send
+    RETURN_ERROR("Requires firmware version 16.3.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
+  }
+
+  {
+    using namespace schema::client;
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_builder.Clear();
+    auto msg_offset =
+      CreateMessageClient(m_builder, MessageType_HEART_BEAT_REQUEST, MessageData_NONE);
+    m_builder.Finish(msg_offset);
+    r = m_sock_ctrl->Send(m_builder);
+    if (0 > r) {
+      m_is_heart_beating = false;
+      return JS_ERROR_NETWORK; // Non-user function, don't set error.
+    }
+    r = m_sock_ctrl->Read(&buf[0], buf_len, nullptr, timeout);
+    if (0 > r) {
+      //We errored
+      m_is_heart_beating = false;
+      return JS_ERROR_NETWORK;
+    } else if (0 == r) {
+      return 0;
+    }
+  }
+
+  m_is_heart_beating = true;
+  return 1;
+}
+
+int ScanHead::SendEncoders(uint32_t serial_main, uint32_t serial_aux1,
+                           uint32_t serial_aux2)
+{
+  CLEAR_ERROR();
 
   std::unique_lock<std::mutex> lock(m_mutex);
 
+  if (!m_firmware_version.IsCompatible(16, 3, 0)) {
+    // scan head doesn't support, don't send
+    RETURN_ERROR("Requires firmware version 16.3.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
+  }
+
+  using namespace schema::client;
+  m_builder.Clear();
+  auto data_offset =
+    CreateScanSyncConfigurationData(m_builder,
+                                    serial_main,
+                                    serial_aux1,
+                                    serial_aux2);
+  auto msg_offset =
+    CreateMessageClient(m_builder, MessageType_SCANSYNC_CONFIGURATION,
+                        MessageData_ScanSyncConfigurationData,
+                        data_offset.Union());
+  m_builder.Finish(msg_offset);
+  int r = m_sock_ctrl->Send(m_builder);
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
+}
+
+int ScanHead::StartScanning(uint64_t start_time_ns,
+                            bool is_frame_scanning)
+{
+  CLEAR_ERROR();
+
+  std::unique_lock<std::mutex> lock(m_mutex);
+
+  m_queue_mutex.lock();
   if (is_frame_scanning) {
     m_profiles.Reset(ProfileQueue::MODE_MULTI);
   } else {
     m_profiles.Reset(ProfileQueue::MODE_SINGLE);
   }
+  m_queue_mutex.unlock();
 
   m_builder.Clear();
   if (0 != start_time_ns) {
+    using namespace schema::client;
     // API commands time to start
     auto data_offset = CreateScanStartData(m_builder, start_time_ns);
     auto msg_offset = CreateMessageClient(m_builder, MessageType_SCAN_START,
@@ -352,22 +470,30 @@ int ScanHead::StartScanning(uint64_t start_time_ns, bool is_frame_scanning)
                                           data_offset.Union());
     m_builder.Finish(msg_offset);
   } else {
+    using namespace schema::client;
     // Leave start time to determination of scan head
     auto msg_offset = CreateMessageClient(m_builder, MessageType_SCAN_START,
                                           MessageData_NONE);
     m_builder.Finish(msg_offset);
   }
+
   int r = m_sock_ctrl->Send(m_builder);
-  if (0 == r) {
-    m_is_frame_scanning = is_frame_scanning;
-    m_is_scanning = true;
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
   }
 
-  return r;
+  m_is_frame_scanning = is_frame_scanning;
+  m_is_scanning = true;
+
+  return 0;
 }
 
 int ScanHead::StopScanning()
 {
+  CLEAR_ERROR();
+
   using namespace schema::client;
   std::unique_lock<std::mutex> lock(m_mutex);
 
@@ -376,69 +502,92 @@ int ScanHead::StopScanning()
     CreateMessageClient(m_builder, MessageType_SCAN_STOP, MessageData_NONE);
   m_builder.Finish(msg_offset);
   int r = m_sock_ctrl->Send(m_builder);
-
-  if (0 == r) {
-    m_is_scanning = false;
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
   }
 
-  return r;
+  m_is_scanning = false;
+
+  return 0;
 }
 
 int ScanHead::SendBrightnessCorrection()
 {
+  CLEAR_ERROR();
+
   int r = 0;
 
-  auto iter = CameraLaserIterator(m_model);
-  for (auto &pair : iter) {
-    r = SendBrightnessCorrection(pair.first, pair.second);
-  }
-
-  return r;
-}
-
-int ScanHead::SendExclusionMask()
-{
-  int r = 0;
-
-  auto iter = CameraLaserIterator(m_model);
-  for (auto &pair : iter) {
-    r = SendExclusionMask(pair.first, pair.second);
-  }
-
-  return r;
-}
-
-int ScanHead::SendWindow()
-{
   auto iter = CameraLaserIterator(m_model);
   for (auto &pair : iter) {
     jsCamera camera = pair.first;
     jsLaser laser = pair.second;
-
-    int r = SendWindow(camera, laser);
+    r = SendBrightnessCorrection(camera, laser);
     if (0 != r) {
-      return r;
+      return r; // rely on previous function to set extended error
     }
   }
 
   return 0;
 }
 
-bool ScanHead::IsConnected()
+int ScanHead::SendExclusionMask()
 {
-  // TODO: fix, grab status message
-  if (nullptr == m_sock_ctrl) {
+  CLEAR_ERROR();
+
+  int r = 0;
+
+  auto iter = CameraLaserIterator(m_model);
+  for (auto &pair : iter) {
+    jsCamera camera = pair.first;
+    jsLaser laser = pair.second;
+    r = SendExclusionMask(camera, laser);
+    if (0 != r) {
+      return r; // rely on previous function to set extended error
+    }
+  }
+
+  return 0;
+}
+
+int ScanHead::SendWindow()
+{
+  CLEAR_ERROR();
+
+  int r = 0;
+
+  auto iter = CameraLaserIterator(m_model);
+  for (auto &pair : iter) {
+    jsCamera camera = pair.first;
+    jsLaser laser = pair.second;
+    r = SendWindow(camera, laser);
+    if (0 != r) {
+      return r; // rely on previous function to set extended error
+    }
+  }
+
+  return 0;
+}
+
+bool ScanHead::IsConnected() const
+{
+  if (nullptr == m_sock_ctrl || !m_sock_ctrl->IsOpen()) {
     return false;
   }
 
-  return m_sock_ctrl->IsOpen();
+  if (!m_is_heart_beating) {
+    return false;
+  }
+  return true;
 }
 
 int32_t ScanHead::GetImage(jsCamera camera, uint32_t camera_exposure_us,
                            uint32_t laser_on_time_us, jsCameraImage *image)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
 
   return GetImage(camera, laser, camera_exposure_us, laser_on_time_us, image);
@@ -447,8 +596,9 @@ int32_t ScanHead::GetImage(jsCamera camera, uint32_t camera_exposure_us,
 int32_t ScanHead::GetImage(jsLaser laser, uint32_t camera_exposure_us,
                            uint32_t laser_on_time_us, jsCameraImage *image)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
 
   return GetImage(camera, laser, camera_exposure_us, laser_on_time_us, image);
@@ -458,24 +608,31 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
                            uint32_t camera_exposure_us,
                            uint32_t laser_on_time_us, jsCameraImage *image)
 {
+  CLEAR_ERROR();
+
   std::unique_lock<std::mutex> lock(m_mutex);
+
+  if (nullptr == image) {
+    RETURN_ERROR("Null camera image argument", JS_ERROR_NULL_ARGUMENT);
+  }
 
   // Only allow image capture if connected and not currently scanning.
   if (!IsConnected()) {
-    return JS_ERROR_NOT_CONNECTED;
+    RETURN_ERROR("Scan head not connected", JS_ERROR_NOT_CONNECTED);
   } else if (m_is_scanning) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning",
+                 JS_ERROR_SCANNING);
   }
 
   int32_t tmp = m_model.CameraIdToPort(camera);
   if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
   }
   uint32_t camera_port = (uint32_t) tmp;
 
   tmp = m_model.LaserIdToPort(laser);
   if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
   }
   uint32_t laser_port = (uint32_t) tmp;
 
@@ -499,9 +656,11 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
                           MessageData_ImageRequestData, data_offset.Union());
     m_builder.Finish(msg_offset);
     int r = m_sock_ctrl->Send(m_builder);
-    if (0 > r) {
-      return r;
-    }
+    if (JS_ERROR_NETWORK == r) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 != r) {
+      RETURN_ERROR("Unknown error", r);
+    } 
   }
 
   {
@@ -515,38 +674,40 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
     std::vector<uint8_t> buf(buf_len, 0);
 
     int r = m_sock_ctrl->Read(&buf[0], buf_len);
-    if ((0 > r) || (0 == r)) {
-      return JS_ERROR_NETWORK;
-    }
+    if ((JS_ERROR_NETWORK == r) || (0 == r)) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    } 
 
     auto verifier = flatbuffers::Verifier(&buf[0], r);
     if (!VerifyMessageServerBuffer(verifier)) {
       // not a flatbuffer message
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     // avoiding flatbuffer object API to avoid consuming extra memory
     auto msg = GetMessageServer(&buf[0]);
     if (MessageType_IMAGE != msg->type()) {
       // wrong / invalid message
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto data = msg->data_as_ImageData();
     if (nullptr == data) {
       // missing data
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto pixels = data->pixels();
     if (nullptr == pixels) {
       // missing data
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     if (pixels->size() != JS_CAMERA_IMAGE_DATA_LEN) {
       // incorrect data size
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto encoders = data->encoders();
@@ -556,7 +717,7 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
 
     if (encoders_size > JS_ENCODER_MAX) {
       // incorrect data size
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     image->scan_head_id = m_model.GetId();
@@ -582,51 +743,68 @@ int32_t ScanHead::GetImage(jsCamera camera, jsLaser laser,
   return 0;
 }
 
-int32_t ScanHead::GetProfile(jsCamera camera, uint32_t camera_exposure_us,
+int32_t ScanHead::GetProfile(jsCamera camera, jsDiagnosticMode mode,
+                             uint32_t camera_exposure_us,
                              uint32_t laser_on_time_us, jsRawProfile *profile)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
 
-  return GetProfile(camera, laser, camera_exposure_us, laser_on_time_us,
+  return GetProfile(camera, laser, mode, camera_exposure_us, laser_on_time_us,
                     profile);
 }
 
-int32_t ScanHead::GetProfile(jsLaser laser, uint32_t camera_exposure_us,
+int32_t ScanHead::GetProfile(jsLaser laser, jsDiagnosticMode mode,
+                             uint32_t camera_exposure_us,
                              uint32_t laser_on_time_us, jsRawProfile *profile)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
 
-  return GetProfile(camera, laser, camera_exposure_us, laser_on_time_us,
+  return GetProfile(camera, laser, mode, camera_exposure_us, laser_on_time_us,
                     profile);
 }
 
 int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
+                             jsDiagnosticMode mode,
                              uint32_t camera_exposure_us,
                              uint32_t laser_on_time_us,
                              jsRawProfile *profile)
 {
+  CLEAR_ERROR();
+
   std::unique_lock<std::mutex> lock(m_mutex);
+
+  if (nullptr == profile) {
+    RETURN_ERROR("Null profile pointer", JS_ERROR_NULL_ARGUMENT);
+  }
+
+  if (JS_DIAGNOSTIC_FIXED_EXPOSURE != mode) {
+    RETURN_ERROR("Only fixed exposure mode supported",
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
 
   // Only allow image capture if connected and not currently scanning.
   if (!IsConnected()) {
-    return JS_ERROR_NOT_CONNECTED;
+    RETURN_ERROR("Scan head not connected", JS_ERROR_NOT_CONNECTED);
   } else if (m_is_scanning) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning",
+                 JS_ERROR_SCANNING);
   }
 
   int32_t tmp = m_model.CameraIdToPort(camera);
   if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
   }
   uint32_t camera_port = (uint32_t) tmp;
 
   tmp = m_model.LaserIdToPort(laser);
   if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
   }
   uint32_t laser_port = (uint32_t) tmp;
 
@@ -662,8 +840,10 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
                           MessageData_ProfileRequestData, data_offset.Union());
     m_builder.Finish(msg_offset);
     int r = m_sock_ctrl->Send(m_builder);
-    if(0 > r) {
-      return r;
+    if (JS_ERROR_NETWORK == r) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
     }
   }
 
@@ -674,26 +854,28 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
     std::vector<uint8_t> buf(buf_len, 0);
 
     int r = m_sock_ctrl->Read(&buf[0], buf_len);
-    if ((0 > r) || (0 == r)) {
-      return JS_ERROR_NETWORK;
+    if ((JS_ERROR_NETWORK == r) || (0 == r)) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
     }
 
     auto verifier = flatbuffers::Verifier(&buf[0], r);
     if (!VerifyMessageServerBuffer(verifier)) {
       // not a message we recognize
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto msg = GetMessageServer(&buf[0]);
     if (MessageType_PROFILE != msg->type()) {
       // wrong / invalid message
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto data = msg->data_as_ProfileData();
     if (nullptr == data) {
       // missing data
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto points = data->points();
@@ -704,7 +886,7 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
 
     if (encoders_size > JS_ENCODER_MAX) {
       // incorrect data size
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     profile->scan_head_id = m_model.GetId();
@@ -754,6 +936,16 @@ int32_t ScanHead::GetProfile(jsCamera camera, jsLaser laser,
 uint32_t ScanHead::WaitUntilAvailableProfiles(uint32_t count,
                                               uint32_t timeout_us)
 {
+  CLEAR_ERROR();
+
+  if (JS_SCAN_HEAD_PROFILES_MAX < count) {
+    count = JS_SCAN_HEAD_PROFILES_MAX;
+  }
+
+  if (!IsConnected()) {
+    RETURN_ERROR("Scan head not connected", JS_ERROR_NOT_CONNECTED);
+  }
+
   // std::condition_variable::wait
   // Atomically unlocks lock, blocks the current executing thread, and adds it
   // to the list of threads waiting on *this. The thread will be unblocked when
@@ -773,14 +965,103 @@ uint32_t ScanHead::WaitUntilAvailableProfiles(uint32_t count,
   return static_cast<uint32_t>(m_profiles.SizeReady());
 }
 
+int32_t ScanHead::ClearProfiles()
+{
+  CLEAR_ERROR();
+
+  if (m_is_frame_scanning) {
+    RETURN_ERROR("Request not allowed while frame scanning",
+                 JS_ERROR_FRAME_SCANNING);
+  }
+  m_queue_mutex.lock();
+  m_profiles.Reset(ProfileQueue::MODE_SINGLE);
+  m_queue_mutex.unlock();
+  return 0;
+}
+
+int32_t ScanHead::GetProfiles(jsRawProfile *profiles, uint32_t max_profiles)
+{
+  CLEAR_ERROR();
+
+  if (nullptr == profiles) {
+    RETURN_ERROR("Null profiles pointer", JS_ERROR_NULL_ARGUMENT);
+  }
+
+  if (m_is_frame_scanning) {
+    RETURN_ERROR("Request not allowed while frame scanning",
+                 JS_ERROR_FRAME_SCANNING);
+  }
+
+  if (!IsConnected()) {
+    RETURN_ERROR("Scan head not connected", JS_ERROR_NOT_CONNECTED);
+  }
+
+  jsRawProfile *p = nullptr;
+  int32_t n = 0;
+  if (!m_queue_mutex.try_lock_shared()) {
+    return 0;
+  }
+  while (max_profiles--) {
+    if (0 != m_profiles.DequeueReady(&p)) {
+      break;
+    }
+    profiles[n++] = *p;
+    // this should never fail
+    int r = m_profiles.EnqueueFree(&p);
+    assert(0 == r);
+  }
+  m_queue_mutex.unlock_shared();
+
+  return n;
+}
+
+int32_t ScanHead::GetProfiles(jsProfile *profiles, uint32_t max_profiles)
+{
+  CLEAR_ERROR();
+
+  if (nullptr == profiles) {
+    RETURN_ERROR("Null profiles pointer", JS_ERROR_NULL_ARGUMENT);
+  }
+
+  if (m_is_frame_scanning) {
+    RETURN_ERROR("Request not allowed while frame scanning",
+                 JS_ERROR_FRAME_SCANNING);
+  }
+
+  if (!IsConnected()) {
+    RETURN_ERROR("Scan head not connected", JS_ERROR_NOT_CONNECTED);
+  }
+
+  jsRawProfile *p = nullptr;
+  int32_t n = 0;
+
+  if (!m_queue_mutex.try_lock_shared()) {
+    return 0;
+  }
+  while (max_profiles--) {
+    if (0 != m_profiles.DequeueReady(&p)) {
+      break;
+    }
+    RawProfileToProfile(p, &profiles[n++]);
+    // this should never fail
+    int r = m_profiles.EnqueueFree(&p);
+    assert(0 == r);
+  }
+  m_queue_mutex.unlock_shared();
+
+  return n;
+}
+
 int ScanHead::GetStatusMessage(StatusMessage *status)
 {
+  CLEAR_ERROR();
+
   static const int32_t buf_len = 256;
   static uint8_t buf[buf_len];
   int r = -1;
 
   if (!IsConnected()) {
-    return JS_ERROR_NOT_CONNECTED;
+    RETURN_ERROR("Scan head not connected", JS_ERROR_NOT_CONNECTED);
   }
 
   {
@@ -788,7 +1069,7 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
 
     // Just need to lock here since the only shared resources are the TCP
     // socket and the flat buffer builder
-    std::unique_lock<std::mutex> lock(m_mutex);
+    std::scoped_lock<std::mutex> lk(m_mutex);
     m_builder.Clear();
 
     auto msg_offset = CreateMessageClient(m_builder, MessageType_STATUS_REQUEST,
@@ -797,13 +1078,17 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
     m_builder.Finish(msg_offset);
 
     r = m_sock_ctrl->Send(m_builder);
-    if (0 != r) {
-      return r;
+    if (JS_ERROR_NETWORK == r) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
     }
 
     r = m_sock_ctrl->Read(&buf[0], buf_len);
-    if ((0 > r) || (0 == r)) {
-      return JS_ERROR_NETWORK;
+    if ((JS_ERROR_NETWORK == r) || (0 == r)) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
     }
   }
 
@@ -814,20 +1099,20 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
     auto verifier = flatbuffers::Verifier(buf, len);
     if (!VerifyMessageServerBuffer(verifier)) {
       // not a flatbuffer message
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto msg = UnPackMessageServer(buf);
     if (MessageType_STATUS != msg->type) {
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
     auto data = msg->data.AsStatusData();
     if (nullptr == data) {
-      return JS_ERROR_INTERNAL;
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
     }
 
-    memset(&m_status, 0, sizeof(StatusMessage));
+    memset((void *)&m_status, 0, sizeof(StatusMessage));
 
     m_status.user.global_time_ns = data->global_time_ns;
     m_status.user.num_profiles_sent = data->num_profiles_sent;
@@ -847,7 +1132,11 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
     std::copy(data->encoders.begin(), data->encoders.end(),
               m_status.user.encoder_values);
 
-    m_status.min_scan_period_us = data->min_scan_period_ns / 1000;
+    m_status.min_scan_period_us = static_cast<uint32_t>(
+      std::ceil(data->min_scan_period_ns / 1000.0));
+
+    m_status.user.state = (jsScanHeadState)data->state;
+    m_status.user.is_laser_disable = data->laser_disabled;
 
     *status = m_status;
   }
@@ -855,48 +1144,152 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
   return 0;
 }
 
+int32_t ScanHead::SendScanSyncStatusRequest(jsScanSyncDiscovered *scan_syncs,
+                                            uint32_t max_results)
+{
+  CLEAR_ERROR();
+
+  static const int32_t buf_len = 1024;
+  static uint8_t buf[buf_len];
+  uint32_t results_len = 0;
+  int r = -1;
+
+  if (!m_firmware_version.IsCompatible(16, 3, 0)) {
+    // scan head doesn't support, don't send
+    RETURN_ERROR("ScanSyncStatusRequest requires version 16.3.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
+  }
+
+  {
+    using namespace schema::client;
+
+    // Just need to lock here since the only shared resources are the TCP
+    // socket and the flat buffer builder
+    std::scoped_lock<std::mutex> lk(m_mutex);
+    m_builder.Clear();
+
+    auto msg_offset = CreateMessageClient(m_builder, MessageType_SCANSYNC_STATUS_REQUEST,
+                                          MessageData_NONE);
+
+    m_builder.Finish(msg_offset);
+
+    r = m_sock_ctrl->Send(m_builder);
+    if (JS_ERROR_NETWORK == r) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+
+    r = m_sock_ctrl->Read(&buf[0], buf_len);
+    if ((JS_ERROR_NETWORK == r) || (0 == r)) {
+      RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+  }
+
+  {
+    using namespace schema::server;
+
+    uint32_t len = static_cast<uint32_t>(r);
+    auto verifier = flatbuffers::Verifier(buf, len);
+    if (!VerifyMessageServerBuffer(verifier)) {
+      // not a flatbuffer message
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
+    }
+
+    auto msg = GetMessageServer(&buf[0]);
+    if (MessageType_SCANSYNC_STATUS != msg->type()) {
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
+    }
+
+    auto data = msg->data_as_ScanSyncStatusData();
+    if (nullptr == data) {
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
+    }
+
+    auto fb_scan_syncs = data->scansyncs();
+    uint32_t scan_sync_size =
+      (nullptr == fb_scan_syncs) ? 0 : fb_scan_syncs->size();
+
+    if (scan_sync_size > JS_ENCODER_MAX) {
+      // incorrect data size
+      RETURN_ERROR("TCP message data error" , JS_ERROR_INTERNAL);
+    }
+
+    results_len = (std::min)(scan_sync_size, max_results);
+    for (uint32_t i = 0; i < results_len; i++) {
+      auto sync = fb_scan_syncs->Get(i);
+      jsScanSyncDiscovered ss;
+
+      ss.serial_number = sync->serial();
+      ss.ip_addr = sync->ip_addr();
+      ss.firmware_version_major = sync->firmware_version_major();
+      ss.firmware_version_minor = sync->firmware_version_minor();
+      ss.firmware_version_patch = sync->firmware_version_patch();
+
+      memcpy(scan_syncs + i, &ss, sizeof(jsScanSyncDiscovered));
+    }
+  }
+  return results_len;
+}
+
 StatusMessage ScanHead::GetLastStatusMessage()
 {
+  CLEAR_ERROR();
   return m_status;
 }
 
 void ScanHead::ClearStatusMessage()
 {
+  CLEAR_ERROR();
   std::lock_guard<std::mutex> lock(m_mutex);
-  memset(&m_status, 0, sizeof(StatusMessage));
+  memset((void *)&m_status, 0, sizeof(StatusMessage));
 }
 
 ScanManager &ScanHead::GetScanManager()
 {
+  CLEAR_ERROR();
   return m_scan_manager;
 }
 
 ProfileQueue *ScanHead::GetProfileQueue()
 {
+  CLEAR_ERROR();
   return &m_profiles;
 }
 
 bool ScanHead::IsConfigurationValid(jsScanHeadConfiguration &cfg)
 {
+  CLEAR_ERROR();
   return m_model.IsConfigurationValid(cfg);
 }
 
 int ScanHead::SetConfiguration(jsScanHeadConfiguration &cfg)
 {
+  CLEAR_ERROR();
+
   std::unique_lock<std::mutex> lock(m_mutex);
-
   if (m_is_scanning) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
   }
 
-  if (!IsConfigurationValid(cfg)) {
-    return JS_ERROR_INVALID_ARGUMENT;
+  if (!m_model.IsConfigurationValid(cfg)) {
+    RETURN_ERROR("Invalid scan head configuration value(s)",
+                 JS_ERROR_INVALID_ARGUMENT);
   }
 
-  return m_data->SetConfiguration(cfg);
+  int r = m_data->SetConfiguration(cfg);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid scan head configuration", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
-uint32_t ScanHead::GetMinScanPeriod()
+uint32_t ScanHead::GetMinScanPeriod() const
 {
   uint32_t s1 = m_status.min_scan_period_us;
   uint32_t s2 = m_model.GetMinScanPeriod();
@@ -905,22 +1298,26 @@ uint32_t ScanHead::GetMinScanPeriod()
 
 void ScanHead::ResetScanPairs()
 {
+  CLEAR_ERROR();
   m_scan_pairs.clear();
 }
 
 int ScanHead::AddScanPair(jsCamera camera, jsLaser laser,
                           jsScanHeadConfiguration &cfg, uint32_t end_offset_us)
 {
+  CLEAR_ERROR();
+
   if (false == m_model.IsPairValid(camera, laser)) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid camera laser pair", JS_ERROR_INVALID_ARGUMENT);
   }
 
-  if (!(IsConfigurationValid(cfg))) {
-    return JS_ERROR_INVALID_ARGUMENT;
+  if (!m_model.IsConfigurationValid(cfg)) {
+    RETURN_ERROR("Invalid scan head configuration", JS_ERROR_INVALID_ARGUMENT);
   }
 
   if (m_scan_pairs.size() >= m_model.GetMaxConfigurationGroups()) {
-    return JS_ERROR_INTERNAL;
+    RETURN_ERROR("Exceeded camera laser pairs supported",
+                 JS_ERROR_INVALID_ARGUMENT);
   }
 
   ScanPair el;
@@ -936,8 +1333,14 @@ int ScanHead::AddScanPair(jsCamera camera, jsLaser laser,
 
 int ScanHead::SetAlignment(double roll_degrees, double shift_x, double shift_y)
 {
-  // set to internal error in case loop doesn't run due to invalid specification
-  int r = JS_ERROR_INTERNAL;
+  CLEAR_ERROR();
+
+  int r = 0;
+
+  if (INVALID_DOUBLE(roll_degrees) || INVALID_DOUBLE(shift_x) ||
+      INVALID_DOUBLE(shift_y)) {
+    RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto iter = CameraLaserIterator(m_model);
   for (auto &pair : iter) {
@@ -946,8 +1349,10 @@ int ScanHead::SetAlignment(double roll_degrees, double shift_x, double shift_y)
                              roll_degrees,
                              shift_x,
                              shift_y);
-    if (0 != r) {
-      return r;
+    if (JS_ERROR_INVALID_ARGUMENT == r) {
+      RETURN_ERROR("Invalid alignment", JS_ERROR_INVALID_ARGUMENT);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
     }
   }
 
@@ -957,29 +1362,63 @@ int ScanHead::SetAlignment(double roll_degrees, double shift_x, double shift_y)
 int ScanHead::SetAlignment(jsCamera camera, double roll_degrees, double shift_x,
                            double shift_y)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
 
-  return m_data->SetAlignment(camera, laser, roll_degrees, shift_x, shift_y);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetAlignment(camera, laser, roll_degrees, shift_x, shift_y);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid alignment", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::SetAlignment(jsLaser laser, double roll_degrees, double shift_x,
                            double shift_y)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
 
-  return m_data->SetAlignment(camera, laser, roll_degrees, shift_x, shift_y);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetAlignment(camera, laser, roll_degrees, shift_x, shift_y);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid alignment", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::GetAlignment(jsCamera camera, double *roll_degrees,
                            double *shift_x, double *shift_y)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
+
+  if ((nullptr == roll_degrees) || (nullptr == shift_x) ||
+      (nullptr == shift_y)) {
+    RETURN_ERROR("Null alignment pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto a = m_data->GetAlignment(camera, laser);
   *roll_degrees = a->roll;
@@ -992,9 +1431,19 @@ int ScanHead::GetAlignment(jsCamera camera, double *roll_degrees,
 int ScanHead::GetAlignment(jsLaser laser, double *roll_degrees, double *shift_x,
                            double *shift_y)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
+
+  if ((nullptr == roll_degrees) || (nullptr == shift_x) ||
+      (nullptr == shift_y)) {
+    RETURN_ERROR("Null alignment pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto a = m_data->GetAlignment(camera, laser);
   *roll_degrees = a->roll;
@@ -1006,11 +1455,22 @@ int ScanHead::GetAlignment(jsLaser laser, double *roll_degrees, double *shift_x,
 
 int ScanHead::SetExclusionMask(jsExclusionMask *mask)
 {
+  CLEAR_ERROR();
+
   int r = 0;
+
+  if (nullptr == mask) {
+    RETURN_ERROR("Null exclusion mask pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto iter = CameraLaserIterator(m_model);
   for (auto &pair : iter) {
     r = m_data->SetExclusionMask(pair.first, pair.second, *mask);
+    if (JS_ERROR_INVALID_ARGUMENT == r) {
+      RETURN_ERROR("Invalid exclusion mask", JS_ERROR_INVALID_ARGUMENT);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
   }
 
   return r;
@@ -1018,27 +1478,68 @@ int ScanHead::SetExclusionMask(jsExclusionMask *mask)
 
 int ScanHead::SetExclusionMask(jsCamera camera, jsExclusionMask *mask)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
 
-  return m_data->SetExclusionMask(camera, laser, *mask);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == mask) {
+    RETURN_ERROR("Null exclusion mask pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetExclusionMask(camera, laser, *mask);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid exclusion mask", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::SetExclusionMask(jsLaser laser, jsExclusionMask *mask)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
 
-  return m_data->SetExclusionMask(camera, laser, *mask);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == mask) {
+    RETURN_ERROR("Null exclusion mask pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetExclusionMask(camera, laser, *mask);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid exclusion mask", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::GetExclusionMask(jsCamera camera, jsExclusionMask *mask)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == mask) {
+    RETURN_ERROR("Null exclusion mask pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto m = m_data->GetExclusionMask(camera, laser);
   memcpy(mask, m, sizeof(jsExclusionMask));
@@ -1048,9 +1549,18 @@ int ScanHead::GetExclusionMask(jsCamera camera, jsExclusionMask *mask)
 
 int ScanHead::GetExclusionMask(jsLaser laser, jsExclusionMask *mask)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == mask) {
+    RETURN_ERROR("Null exclusion mask pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto m = m_data->GetExclusionMask(camera, laser);
   memcpy(mask, m, sizeof(jsExclusionMask));
@@ -1061,29 +1571,73 @@ int ScanHead::GetExclusionMask(jsLaser laser, jsExclusionMask *mask)
 int ScanHead::SetBrightnessCorrection(jsCamera camera,
                                       jsBrightnessCorrection_BETA *correction)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
 
-  return m_data->SetBrightnessCorrection(camera, laser, *correction);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == correction) {
+    RETURN_ERROR("Null brightness correction pointer",
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetBrightnessCorrection(camera, laser, *correction);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid brightness correction", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::SetBrightnessCorrection(jsLaser laser,
                                       jsBrightnessCorrection_BETA *correction)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
 
-  return m_data->SetBrightnessCorrection(camera, laser, *correction);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == correction) {
+    RETURN_ERROR("Null brightness correction pointer",
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetBrightnessCorrection(camera, laser, *correction);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid brightness correction", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::GetBrightnessCorrection(jsCamera camera,
                                       jsBrightnessCorrection_BETA *correction)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == correction) {
+    RETURN_ERROR("Null brightness correction pointer",
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto c = m_data->GetBrightnessCorrection(camera, laser);
   memcpy(correction, c, sizeof(jsBrightnessCorrection_BETA));
@@ -1094,9 +1648,19 @@ int ScanHead::GetBrightnessCorrection(jsCamera camera,
 int ScanHead::GetBrightnessCorrection(jsLaser laser,
                                       jsBrightnessCorrection_BETA *correction)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (nullptr == correction) {
+    RETURN_ERROR("Null brightness correction pointer",
+                 JS_ERROR_INVALID_ARGUMENT);
+  }
 
   auto c = m_data->GetBrightnessCorrection(camera, laser);
   memcpy(correction, c, sizeof(jsBrightnessCorrection_BETA));
@@ -1104,97 +1668,394 @@ int ScanHead::GetBrightnessCorrection(jsLaser laser,
   return 0;
 }
 
-int ScanHead::SetWindow(ScanWindow &window)
+int ScanHead::SetWindowUnconstrained()
 {
+  CLEAR_ERROR();
+
   using namespace schema::client;
-  // set to internal error in case loop doesn't run due to invalid specification
-  int r = JS_ERROR_INTERNAL;
 
   auto iter = CameraLaserIterator(m_model);
   for (auto &pair : iter) {
-    r = m_data->SetWindow(pair.first, pair.second, window);
+    try {
+      ScanWindow window;
+      int r = m_data->SetWindow(pair.first, pair.second, window);
+      if (0 > r) {
+        RETURN_ERROR("Unknown error", r);
+      }
+    } catch (std::exception &e) {
+      RETURN_ERROR(e.what(), JS_ERROR_INVALID_ARGUMENT);
+    }
   }
 
-  return r;
+  return 0;
 }
 
-int ScanHead::SetWindow(jsCamera camera, ScanWindow &window)
+int ScanHead::SetWindowUnconstrained(jsCamera camera)
 {
   jsLaser laser;
 
+  CLEAR_ERROR();
   CAMERA_GET_LASER(camera, laser);
 
-  return m_data->SetWindow(camera, laser, window);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  try {
+    ScanWindow window;
+    int r = m_data->SetWindow(camera, laser, window);
+    if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+  } catch (std::exception &e) {
+    RETURN_ERROR(e.what(), JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  return 0;
 }
 
-int ScanHead::SetWindow(jsLaser laser, ScanWindow &window)
+int ScanHead::SetWindowUnconstrained(jsLaser laser)
 {
   jsCamera camera;
-
+  
+  CLEAR_ERROR();
   LASER_GET_CAMERA(laser, camera);
 
-  return m_data->SetWindow(camera, laser, window);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  try {
+    ScanWindow window;
+    int r = m_data->SetWindow(camera, laser, window);
+    if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+  } catch (std::exception &e) {
+    RETURN_ERROR(e.what(), JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  return 0;
+}
+
+int ScanHead::SetWindow(double top,
+                        double bottom,
+                        double left,
+                        double right)
+{
+  CLEAR_ERROR();
+
+  using namespace schema::client;
+
+  if (INVALID_DOUBLE(top) ||
+      INVALID_DOUBLE(bottom) ||
+      INVALID_DOUBLE(left) ||
+      INVALID_DOUBLE(right)) {
+    RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  auto iter = CameraLaserIterator(m_model);
+  for (auto &pair : iter) {
+    try {
+      ScanWindow window(top, bottom, left, right);
+      int r = m_data->SetWindow(pair.first, pair.second, window);
+      if (0 > r) {
+        RETURN_ERROR("Unknown error", r);
+      }
+    } catch (std::exception &e) {
+      RETURN_ERROR(e.what(), JS_ERROR_INVALID_ARGUMENT);
+    }
+  }
+
+  return 0;
+}
+
+int ScanHead::SetWindow(jsCamera camera,
+                        double top,
+                        double bottom,
+                        double left,
+                        double right)
+{
+  jsLaser laser;
+
+  CLEAR_ERROR();
+  CAMERA_GET_LASER(camera, laser);
+
+  if (INVALID_DOUBLE(top) ||
+      INVALID_DOUBLE(bottom) ||
+      INVALID_DOUBLE(left) ||
+      INVALID_DOUBLE(right)) {
+    RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  try {
+    ScanWindow window(top, bottom, left, right);
+    int r = m_data->SetWindow(camera, laser, window);
+    if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+  } catch (std::exception &e) {
+    RETURN_ERROR(e.what(), JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  return 0;
+}
+
+int ScanHead::SetWindow(jsLaser laser,
+                        double top,
+                        double bottom,
+                        double left,
+                        double right)
+{
+  CLEAR_ERROR();
+
+  jsCamera camera;
+  LASER_GET_CAMERA(laser, camera);
+
+  if (INVALID_DOUBLE(top) ||
+      INVALID_DOUBLE(bottom) ||
+      INVALID_DOUBLE(left) ||
+      INVALID_DOUBLE(right)) {
+    RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  try {
+    ScanWindow window(top, bottom, left, right);
+    int r = m_data->SetWindow(camera, laser, window);
+    if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+  } catch (std::exception &e) {
+    RETURN_ERROR(e.what(), JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  return 0;
 }
 
 int ScanHead::SetPolygonWindow(jsCoordinate *points, uint32_t points_len)
 {
-  // set to internal error in case loop doesn't run due to invalid specification
-  int r = JS_ERROR_INTERNAL;
+  CLEAR_ERROR();
 
-  auto iter = CameraLaserIterator(m_model);
-  for (auto &pair : iter) {
-    r = m_data->SetPolygonWindow(pair.first, pair.second, points, points_len);
-    if (0 != r) {
-      return r;
+  if (nullptr == points) {
+    RETURN_ERROR("Null polygon window pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  for (uint32_t n = 0; n < points_len; n++) {
+    if (INVALID_DOUBLE(points[n].x) || INVALID_DOUBLE(points[n].y)) {
+      RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
     }
   }
 
-  return r;
+  auto iter = CameraLaserIterator(m_model);
+  for (auto &pair : iter) {
+    int r = m_data->SetPolygonWindow(pair.first,
+                                     pair.second,
+                                     points,
+                                     points_len);
+    if (JS_ERROR_INVALID_ARGUMENT == r) {
+      RETURN_ERROR("Invalid camera and laser", JS_ERROR_INVALID_ARGUMENT);
+    } else if (JS_ERROR_INVALID_ARGUMENT == r) {
+      RETURN_ERROR("Invalid polygon window", JS_ERROR_INVALID_ARGUMENT);
+    } else if (0 > r) {
+      RETURN_ERROR("Unknown error", r);
+    }
+  }
+
+  return 0;
 }
 
 int ScanHead::SetPolygonWindow(jsCamera camera, jsCoordinate *points,
                                uint32_t points_len)
 {
-  jsLaser laser;
+  CLEAR_ERROR();
 
+  jsLaser laser;
   CAMERA_GET_LASER(camera, laser);
 
-  return m_data->SetPolygonWindow(camera, laser, points, points_len);
+  if (nullptr == points) {
+    RETURN_ERROR("Null polygon window pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  for (uint32_t n = 0; n < points_len; n++) {
+    if (INVALID_DOUBLE(points[n].x) || INVALID_DOUBLE(points[n].y)) {
+      RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
+    }
+  }
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetPolygonWindow(camera, laser, points, points_len);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid polygon window", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
 }
 
 int ScanHead::SetPolygonWindow(jsLaser laser, jsCoordinate *points,
                      uint32_t points_len)
 {
-  jsCamera camera;
+  CLEAR_ERROR();
 
+  jsCamera camera;
   LASER_GET_CAMERA(laser, camera);
 
-  return m_data->SetPolygonWindow(camera, laser, points, points_len);
+  if (nullptr == points) {
+    RETURN_ERROR("Null polygon window pointer", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  for (uint32_t n = 0; n < points_len; n++) {
+    if (INVALID_DOUBLE(points[n].x) || INVALID_DOUBLE(points[n].y)) {
+      RETURN_ERROR("Invalid double argument", JS_ERROR_INVALID_ARGUMENT);
+    }
+  }
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  int r = m_data->SetPolygonWindow(camera, laser, points, points_len);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid polygon window", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
+}
+
+int ScanHead::GetWindowType(jsCamera camera, jsScanWindowType *type)
+{
+  CLEAR_ERROR();
+
+  jsLaser laser;
+  CAMERA_GET_LASER(camera, laser);
+  
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera and laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  *type = m_data->GetWindowType(camera, laser);
+
+  return 0;
+}
+
+int ScanHead::GetWindowType(jsLaser laser, jsScanWindowType *type)
+{
+  CLEAR_ERROR();
+
+  jsCamera camera;
+  LASER_GET_CAMERA(laser, camera);
+  
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera and laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  *type = m_data->GetWindowType(camera, laser);
+
+  return 0;
+}
+
+int ScanHead::GetWindowCoordinatesCount(jsCamera camera)
+{
+  CLEAR_ERROR();
+
+  jsLaser laser;
+  CAMERA_GET_LASER(camera, laser);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  return static_cast<int>(m_data->GetWindow(camera, laser)->GetCoordinates().size());
+}
+
+int ScanHead::GetWindowCoordinatesCount(jsLaser laser)
+{
+  CLEAR_ERROR();
+
+  jsCamera camera;
+  LASER_GET_CAMERA(laser, camera);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  return static_cast<int>(m_data->GetWindow(camera, laser)->GetCoordinates().size());
+}
+
+int ScanHead::GetWindowCoordinates(jsCamera camera, jsCoordinate *points)
+{
+  CLEAR_ERROR();
+
+  jsLaser laser;
+  CAMERA_GET_LASER(camera, laser);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  auto coordinates = m_data->GetWindow(camera, laser)->GetCoordinates();
+
+  std::copy(coordinates.begin(), coordinates.end(), points);
+
+  return 0;
+}
+
+int ScanHead::GetWindowCoordinates(jsLaser laser, jsCoordinate *points)
+{
+  CLEAR_ERROR();
+
+  jsCamera camera;
+  LASER_GET_CAMERA(laser, camera);
+
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid laser", JS_ERROR_INVALID_ARGUMENT);
+  }
+
+  auto coordinates = m_data->GetWindow(camera, laser)->GetCoordinates();
+
+  std::copy(coordinates.begin(), coordinates.end(), points);
+
+  return 0;
 }
 
 int ScanHead::SendExclusionMask(jsCamera camera, jsLaser laser)
 {
+  CLEAR_ERROR();
+
   if (!m_firmware_version.IsCompatible(16, 1, 0)) {
     // scan head doesn't support, don't send
-    return 0;
+    RETURN_ERROR("Exclusion mask requires version 16.1.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
   }
-
+  std::unique_lock<std::mutex> lock(m_mutex);
   if (!m_model.IsPairValid(camera, laser)) {
-    return JS_ERROR_INVALID_ARGUMENT;
+    RETURN_ERROR("Invalid camera laser pair", JS_ERROR_INVALID_ARGUMENT);
   }
 
   auto mask = m_data->GetExclusionMask(camera, laser);
 
-  int32_t tmp = m_model.CameraIdToPort(camera);
-  if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
-  }
+  int32_t tmp = 0;
+  tmp = m_model.CameraIdToPort(camera);
+  // this should never fail, we checked pair validity previously
+  assert(0 <= tmp);
   uint32_t camera_port = (uint32_t) tmp;
-
   tmp = m_model.LaserIdToPort(laser);
-  if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
-  }
+  // this should never fail, we checked pair validity previously
+  assert(0 <= tmp);
   uint32_t laser_port = (uint32_t) tmp;
 
   using namespace schema::client;
@@ -1230,8 +2091,10 @@ int ScanHead::SendExclusionMask(jsCamera camera, jsLaser laser)
                         MessageData_ExclusionMaskData, data_offset.Union());
   m_builder.Finish(msg_offset);
   int r = m_sock_ctrl->Send(m_builder);
-  if(0 > r) {
-    return r;
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
   }
 
   return 0;
@@ -1239,28 +2102,28 @@ int ScanHead::SendExclusionMask(jsCamera camera, jsLaser laser)
 
 int ScanHead::SendBrightnessCorrection(jsCamera camera, jsLaser laser)
 {
+  CLEAR_ERROR();
+
   if (!m_firmware_version.IsCompatible(16, 1, 0)) {
     // scan head doesn't support, don't send
-    return 0;
+    RETURN_ERROR("Brightness correction requires version 16.1.0",
+                 JS_ERROR_VERSION_COMPATIBILITY);
   }
-
-  if ((false == m_model.IsCameraValid(camera)) ||
-      (false == m_model.IsLaserValid(laser))) {
-    return JS_ERROR_INVALID_ARGUMENT;
+  std::unique_lock<std::mutex> lock(m_mutex);
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera and laser", JS_ERROR_INVALID_ARGUMENT);
   }
 
   auto corr = m_data->GetBrightnessCorrection(camera, laser);
 
-  int32_t tmp = m_model.CameraIdToPort(camera);
-  if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
-  }
+  int32_t tmp = 0;
+  tmp = m_model.CameraIdToPort(camera);
+  // this should never fail, we checked pair validity previously
+  assert(0 <= tmp);
   uint32_t camera_port = (uint32_t) tmp;
-
   tmp = m_model.LaserIdToPort(laser);
-  if (0 > tmp) {
-    return JS_ERROR_INVALID_ARGUMENT;
-  }
+  // this should never fail, we checked pair validity previously
+  assert(0 <= tmp);
   uint32_t laser_port = (uint32_t) tmp;
 
   using namespace schema::client;
@@ -1281,8 +2144,10 @@ int ScanHead::SendBrightnessCorrection(jsCamera camera, jsLaser laser)
                         data_offset.Union());
   m_builder.Finish(msg_offset);
   int r = m_sock_ctrl->Send(m_builder);
-  if(0 > r) {
-    return r;
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
   }
 
   return 0;
@@ -1290,30 +2155,32 @@ int ScanHead::SendBrightnessCorrection(jsCamera camera, jsLaser laser)
 
 int ScanHead::SendWindow(jsCamera camera, jsLaser laser)
 {
-  using namespace schema::client;
+  CLEAR_ERROR();
 
+  using namespace schema::client;
   std::unique_lock<std::mutex> lock(m_mutex);
-  WindowConfigurationDataT data;
-  int port = 0;
   int r = 0;
 
-  port = m_model.CameraIdToPort(camera);
-  if (-1 == port) {
-    return JS_ERROR_INTERNAL;
+  if (!m_model.IsPairValid(camera, laser)) {
+    RETURN_ERROR("Invalid camera and laser", JS_ERROR_INVALID_ARGUMENT);
   }
-  data.camera_port = port;
 
-  port = m_model.LaserIdToPort(laser);
-  if (-1 == port) {
-    return JS_ERROR_INTERNAL;
-  }
-  data.laser_port = port;
+  int32_t tmp = 0;
+  tmp = m_model.CameraIdToPort(camera);
+  assert(0 <= tmp);
+  uint32_t camera_port = (uint32_t) tmp;
+  tmp = m_model.LaserIdToPort(laser);
+  assert(0 <= tmp);
+  uint32_t laser_port = (uint32_t) tmp;
 
   auto pair = std::make_pair(camera, laser);
   auto alignment = m_data->GetAlignment(camera, laser);
   auto transform = m_data->GetTransform(camera, laser);
   auto window = m_data->GetWindow(camera, laser);
 
+  WindowConfigurationDataT data;
+  data.camera_port = camera_port;
+  data.laser_port = laser_port;
   std::vector<WindowConstraint> constraints = window->GetConstraints();
   for (auto const &c : constraints) {
     Point2D<int32_t> p0, p1;
@@ -1353,8 +2220,10 @@ int ScanHead::SendWindow(jsCamera camera, jsLaser laser)
     MessageData_WindowConfigurationData, data_offset.Union());
   m_builder.Finish(msg_offset);
   r = m_sock_ctrl->Send(m_builder);
-  if (0 != r) {
-    return r;
+  if (JS_ERROR_NETWORK == r) {
+    RETURN_ERROR("TCP network error", JS_ERROR_NETWORK);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
   }
 
   return 0;
@@ -1362,6 +2231,8 @@ int ScanHead::SendWindow(jsCamera camera, jsLaser laser)
 
 int ScanHead::ProcessProfile(DataPacket *packet, jsRawProfile *raw)
 {
+  // Internal profile receive & processing function, don't clear error
+
   const jsCamera camera = m_model.CameraPortToId(packet->header.camera_port);
   const jsLaser laser = m_model.LaserPortToId(packet->header.laser_port);
 
@@ -1382,10 +2253,13 @@ int ScanHead::ProcessProfile(DataPacket *packet, jsRawProfile *raw)
   raw->packets_expected = 1;
   raw->packets_received = 1;
 
-  assert(packet->encoders.size() < JS_ENCODER_MAX);
+  // assert(packet->encoders.size() < JS_ENCODER_MAX);
   for (uint32_t n = 0; n < packet->encoders.size(); n++) {
     raw->encoder_values[n] = packet->encoders[n];
     raw->num_encoder_values++;
+  }
+  for (uint32_t n = raw->num_encoder_values; n < JS_ENCODER_MAX; n++) {
+    raw->encoder_values[n] = JS_SCANSYNC_INVALID_ENCODER;
   }
 
   for (uint32_t n = 0; n < JS_RAW_PROFILE_DATA_LEN; n++) {
@@ -1456,6 +2330,8 @@ int ScanHead::ProcessProfile(DataPacket *packet, jsRawProfile *raw)
 
 void ScanHead::ThreadScanningReceive()
 {
+  // Internal profile receive & processing function, don't clear error
+
 #ifdef _WIN32
   // Bump up thread priority; receiving profiles is the most important thing
   // for end users.
@@ -1471,14 +2347,21 @@ void ScanHead::ThreadScanningReceive()
     int r = 0;
 
     r = sock.Read(buf, buf_len, &m_is_receive_thread_active);
-    if ((0 >= r) || (!m_is_receive_thread_active)) {
+    if ((0 > r) || (!m_is_receive_thread_active)) {
       // Connection closed or commanded to stop; stop the thread.
       return;
+    } else if (0 == r) {
+      //Timed out, try again
+      continue;
     }
 
     const uint16_t magic = (buf[0] << 8) | (buf[1]);
     if (kDataMagic != magic) {
       // Not a profile? What could this be?
+      continue;
+    }
+
+    if (!m_is_scanning) {
       continue;
     }
 
@@ -1491,9 +2374,13 @@ void ScanHead::ThreadScanningReceive()
       // Only process profile data if there is free memory available that can be
       // used to hold new profile data. If no free memory, skip processing; in
       // effect, dropping the profile in software.
+      if (!m_queue_mutex.try_lock_shared()) {
+        continue;
+      }
       r = m_profiles.SizeFree(camera, laser);
       if (0 == r) {
         // User stopped reading out profiles; no free memory available.
+        m_queue_mutex.unlock_shared();
         continue;
       }
 
@@ -1506,6 +2393,7 @@ void ScanHead::ThreadScanningReceive()
 
       // Send new profile over to queue for user to read out.
       r = m_profiles.EnqueueReady(camera, laser, &raw);
+      m_queue_mutex.unlock_shared();
       // should not fail
       assert(0 == r);
       m_last_sequence = packet.header.sequence_number;
@@ -1526,9 +2414,13 @@ void ScanHead::ThreadScanningReceive()
       // Only process profile data if there is free memory available that can be
       // used to hold new profile data. If no free memory, skip processing; in
       // effect, dropping the profile in software.
+      if (!m_queue_mutex.try_lock_shared()) {
+        continue;
+      }
       r = m_profiles.SizeFree();
       if (0 == r) {
         // User stopped reading out profiles; no free memory available.
+        m_queue_mutex.unlock_shared();
         continue;
       }
 
@@ -1541,6 +2433,7 @@ void ScanHead::ThreadScanningReceive()
 
       // Send new profile over to queue for user to read out.
       r = m_profiles.EnqueueReady(&raw);
+      m_queue_mutex.unlock_shared();
       // should not fail
       assert(0 == r);
       m_last_sequence = packet.header.sequence_number;
@@ -1557,12 +2450,6 @@ void ScanHead::ThreadScanningReceive()
   // Final notify in case user is in `jsScanHeadWaitUntilProfilesAvailable()`.
   m_new_data_cv.notify_all();
 }
-
-/**
- * These functions are really a small shim layer. In the future, we want to
- * move all the code in this file to `joescan_api.cpp`; code below is easy
- * drop in.
- */
 
 jsScanHeadType ScanHead::GetType() const
 {
@@ -1584,12 +2471,12 @@ uint32_t ScanHead::GetIpAddress() const
   return m_ip_address;
 }
 
-SemanticVersion ScanHead::GetFirmwareVersion()
+SemanticVersion ScanHead::GetFirmwareVersion() const
 {
   return m_firmware_version;
 }
 
-jsScanHeadCapabilities ScanHead::GetCapabilities()
+jsScanHeadCapabilities ScanHead::GetCapabilities() const
 {
   jsScanHeadCapabilities capabilities;
 
@@ -1605,28 +2492,29 @@ jsScanHeadCapabilities ScanHead::GetCapabilities()
   return capabilities;
 }
 
-bool ScanHead::IsScanning()
+bool ScanHead::IsScanning() const
 {
   return m_is_scanning;
 }
 
-jsCamera ScanHead::GetPairedCamera(jsLaser laser)
+jsCamera ScanHead::GetPairedCamera(jsLaser laser) const
 {
   return m_model.GetPairedCamera(laser);
 }
 
-jsLaser ScanHead::GetPairedLaser(jsCamera camera)
+jsLaser ScanHead::GetPairedLaser(jsCamera camera) const
 {
   return m_model.GetPairedLaser(camera);
 }
 
-uint32_t ScanHead::GetCameraLaserPairCount()
+uint32_t ScanHead::GetCameraLaserPairCount() const
 {
   return m_model.GetCameraLaserPairCount();
 }
 
 uint32_t ScanHead::AvailableProfiles()
 {
+  CLEAR_ERROR();
   return static_cast<uint32_t>(m_profiles.SizeReady());
 }
 
@@ -1642,59 +2530,81 @@ jsScanHeadConfiguration ScanHead::GetConfigurationDefault() const
   return cfg;
 }
 
-uint32_t ScanHead::GetMaxScanPairs()
+uint32_t ScanHead::GetScanPairsMax() const
 {
   return m_model.GetMaxConfigurationGroups();
 }
 
-int ScanHead::SetCableOrientation(jsCableOrientation cable)
+uint32_t ScanHead::GetScanPairsCount() const
 {
-  return m_data->SetCableOrientation(cable);
+  return (uint32_t) m_scan_pairs.size();
 }
 
-jsCableOrientation ScanHead::GetCableOrientation()
+int ScanHead::SetCableOrientation(jsCableOrientation cable)
+{
+  CLEAR_ERROR();
+
+  int r =  m_data->SetCableOrientation(cable);
+  if (JS_ERROR_INVALID_ARGUMENT == r) {
+    RETURN_ERROR("Invalid cable orientation", JS_ERROR_INVALID_ARGUMENT);
+  } else if (0 > r) {
+    RETURN_ERROR("Unknown error", r);
+  }
+
+  return 0;
+}
+
+jsCableOrientation ScanHead::GetCableOrientation() const
 {
   return m_data->GetCableOrientation();
 }
 
-uint32_t ScanHead::GetMinimumEncoderTravel()
+uint32_t ScanHead::GetMinimumEncoderTravel() const
 {
   return m_min_ecoder_travel;
 }
 
 int32_t ScanHead::SetMinimumEncoderTravel(uint32_t travel)
 {
+  CLEAR_ERROR();
   m_min_ecoder_travel = travel;
 
   return 0;
 }
 
-uint32_t ScanHead::GetIdleScanPeriod()
+uint32_t ScanHead::GetIdleScanPeriod() const
 {
   return (uint32_t) (m_idle_scan_period_ns / 1000);
 }
 
 int32_t ScanHead::SetIdleScanPeriod(uint32_t period_us)
 {
+  CLEAR_ERROR();
   if (m_is_scanning) {
-    return JS_ERROR_SCANNING;
+    RETURN_ERROR("Request not allowed while scanning", JS_ERROR_SCANNING);
   }
 
   m_idle_scan_period_ns = period_us * 1000;
   return 0;
 }
 
-uint32_t ScanHead::GetLastSequenceNumber()
+uint32_t ScanHead::GetLastSequenceNumber() const
 {
   return m_last_sequence;
 }
 
-bool ScanHead::IsDirty()
+bool ScanHead::IsDirty() const
 {
   return m_data->IsDirty();
 }
 
 void ScanHead::ClearDirty()
 {
+  CLEAR_ERROR();
   m_data->ClearDirty();
+}
+
+std::string ScanHead::GetErrorExtended() const
+{
+  return m_error_extended_str;
 }

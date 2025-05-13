@@ -19,6 +19,8 @@ namespace joescan {
 // forward declaration
 class CameraLaserIterator;
 
+/// This class provides an abstraction to the `ScanHeadSpecification` schema
+/// and data derived from it.
 class ScanHeadModel {
  public:
   ScanHeadModel(jsScanHeadType type, uint32_t serial_number, uint32_t id);

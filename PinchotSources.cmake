@@ -13,11 +13,11 @@ set(CXXOPTS_DIR ${THIRD_PARTY_LIB_DIR}/cxxopts-b0f67a06de3446aa97a4943ad0ad60864
 set(RDWRQ_DIR ${THIRD_PARTY_LIB_DIR}/readerwriterqueue-6b5cca00b3a4d2ec539e0ac996482b3e8aae5a84)
 
 include_directories(
-  ${BETTER_ENUMS_DIR}
   ${CXXOPTS_DIR}
   ${RDWRQ_DIR}
 )
 
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)

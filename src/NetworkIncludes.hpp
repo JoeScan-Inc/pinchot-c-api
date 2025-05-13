@@ -8,6 +8,7 @@
 #ifndef JOESCAN_NETWORK_INCLUDES_H
 #define JOESCAN_NETWORK_INCLUDES_H
 
+/// Macro to append file, line number, and errno message to a string
 #define NETWORK_TRACE \
   (std::string(__FILE__) + ":" + std::to_string(__LINE__) + " " + \
    strerror(errno));

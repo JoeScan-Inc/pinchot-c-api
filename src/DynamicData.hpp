@@ -48,6 +48,7 @@ struct DynamicData {
   int SetPolygonWindow(jsCamera camera, jsLaser laser, jsCoordinate *points,
                        uint32_t points_len);
   const ScanWindow* GetWindow(jsCamera camera, jsLaser laser);
+  jsScanWindowType GetWindowType(jsCamera camera, jsLaser laser);
 
   bool IsDirty();
   void ClearDirty();
