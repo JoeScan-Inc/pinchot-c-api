@@ -228,7 +228,6 @@ class ScanHead {
 
   /**
    * Requests a new scansync message from the scan head.
-   *
    * @param scan_syncs ScanSyncs seen by scanner
    * @param max_results number of ScanSyncs, limited by JS_ENCODER_MAX
    * @return `0` on success, negative value mapping to `jsError` on error.

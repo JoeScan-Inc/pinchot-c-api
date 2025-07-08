@@ -68,6 +68,8 @@ class ScanManager {
                              uint32_t serial_aux2);
   int32_t GetScanSyncEncoder(uint32_t *serial_main, uint32_t *serial_aux1,
                              uint32_t *serial_aux2);
+  int32_t SetDefaultScanSyncEncoder();
+
   /**
    * @brief Creates a `ScanHead` object used to receive scan data.
    *

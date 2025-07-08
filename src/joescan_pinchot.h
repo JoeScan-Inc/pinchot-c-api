@@ -1034,6 +1034,15 @@ EXPORTED int PRE jsScanSystemGetScanSyncEncoder(
   uint32_t *serial_aux2) POST;
 
 /**
+ * @ingroup Configuration
+ * @brief Clear the ScanSync mapping and use the default (lowest serial is MAIN)
+ * 
+ * @param scan_system Reference to system of scan heads.
+ * @return `0` on success, negative value `jsError` on error.
+ */
+EXPORTED int PRE jsScanSystemSetDefaultScanSyncEncoder(jsScanSystem scan_system) POST;
+
+/**
  * @ingroup Configuration 
  * @brief Obtains the status of a given ScanSync.
  *

@@ -27,7 +27,7 @@ namespace joescan {
 /// release; our build system does *not* manage this.
 #define API_VERSION_MAJOR 16
 #define API_VERSION_MINOR 3
-#define API_VERSION_PATCH 0
+#define API_VERSION_PATCH 1
 
 #define API_VERSION_SEMANTIC \
   STR(API_VERSION_MAJOR) "." STR(API_VERSION_MINOR) "." STR(API_VERSION_PATCH)

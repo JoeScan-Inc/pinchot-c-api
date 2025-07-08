@@ -379,6 +379,37 @@ int32_t ScanManager::GetScanSyncEncoder(uint32_t *serial_main,
   return 0;
 }
 
+int32_t ScanManager::SetDefaultScanSyncEncoder()
+{
+  CLEAR_ERROR();
+
+  if (!IsConnected()) {
+    RETURN_ERROR("Request not allowed while disconnected",
+                 JS_ERROR_NOT_CONNECTED);
+  }
+
+  m_is_user_encoder_map = false;
+  m_is_encoder_dirty = true;
+  for (uint32_t n = 0; n < JS_ENCODER_MAX; n++) {
+    m_encoder_to_serial[(jsEncoder) n] = JS_SCANSYNC_INVALID_SERIAL;
+  }
+
+  std::vector<jsScanSyncDiscovered> d(JS_ENCODER_MAX);
+  int r = DiscoverScanSyncs(&d[0], JS_ENCODER_MAX);
+  uint32_t sync_count = 0 > r ? 0 : r;
+
+  for (uint32_t n = 0; n <= JS_ENCODER_MAX; n++) {
+    jsEncoder e = (jsEncoder) n;
+    if (n < sync_count) {
+      m_encoder_to_serial[e] = d[n].serial_number;
+    } else {
+      m_encoder_to_serial[e] = JS_SCANSYNC_INVALID_SERIAL;
+    }
+  }
+
+  return 0;
+}
+
 int32_t ScanManager::CreateScanHead(uint32_t serial_number, uint32_t id)
 {
   CLEAR_ERROR();
@@ -768,25 +799,6 @@ int ScanManager::StartScanning(uint32_t period_us, jsDataFormat fmt,
                 JS_ERROR_INVALID_ARGUMENT);
   }
 
-  if (!m_is_user_encoder_map) {
-    // ScanSync mapping has not been set by user; set to default.
-    // Default ScanSync mapping is lowest serial number as Main.
-    // NOTE: discover function returns serials in ascending order.
-    m_is_encoder_dirty = true;
-    std::vector<jsScanSyncDiscovered> d(JS_ENCODER_MAX);
-    r = DiscoverScanSyncs(&d[0], JS_ENCODER_MAX);
-    uint32_t sync_count = 0 > r ? 0 : r;
-
-    for (uint32_t n = 0; n <= JS_ENCODER_MAX; n++) {
-      jsEncoder e = (jsEncoder) n;
-      if (n < sync_count) {
-        m_encoder_to_serial[e] = d[n].serial_number;
-      } else {
-        m_encoder_to_serial[e] = JS_SCANSYNC_INVALID_SERIAL;
-      }
-    }
-  }
-
   r = Configure();
   if (0 != r) {
     return r; // rely on previous function to set extended error
@@ -1172,6 +1184,10 @@ int32_t ScanManager::Configure()
   bool is_config_dirty = !IsConfigured();
   bool is_phase_table_dirty = m_phase_table.IsDirty();
 
+  if (JS_SCANSYNC_INVALID_SERIAL == m_encoder_to_serial[JS_ENCODER_MAIN]) {
+    SetDefaultScanSyncEncoder();
+  }
+
   if (m_is_encoder_dirty) {
     if (JS_SCANSYNC_INVALID_SERIAL != m_encoder_to_serial[JS_ENCODER_MAIN]) {
       for (auto const &pair : m_serial_to_scan_head) {
@@ -1351,9 +1367,12 @@ void ScanManager::KeepAliveThread()
   // recover in the event that they fail to send and go into idle state.
   const uint32_t keep_alive_send_ms = 1000;
 
-  // Silently exit when we have heart beat support
-  if (m_version_scan_head_lowest.IsCompatible(16, 3, 0)) {
-    return;
+  // TODO: Revisit heartbeat, we needed to get 16.3.1 out quickly
+  if (false) {
+    // Silently exit when we have heart beat support
+    if (m_version_scan_head_lowest.IsCompatible(16, 3, 0)) {
+      return;
+    }
   }
 
   while (1) {
@@ -1385,6 +1404,9 @@ void ScanManager::HeartBeatThread()
   struct timeval timeout;
   timeout.tv_sec = DEFAULT_TIMEOUT_SEC;
   timeout.tv_usec = DEFAULT_TIMEOUT_USEC;
+
+  // TODO: Revisit heartbeat, we needed to get 16.3.1 out quickly
+  return;
 
   // Silently exit when we don't have compatible devices
   if (!m_version_scan_head_lowest.IsCompatible(16, 3, 0)) {

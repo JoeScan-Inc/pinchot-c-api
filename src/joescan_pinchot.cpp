@@ -419,7 +419,13 @@ int jsScanSystemScanSyncDiscover(
   int r = 0;
 
   try {
-    r = _scansync.GetDiscoveredSize();
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    std::vector<jsScanSyncDiscovered> discovered(JS_ENCODER_MAX);
+    r = manager->DiscoverScanSyncs(&discovered[0], JS_ENCODER_MAX);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -437,11 +443,12 @@ int jsScanSystemGetScanSyncDiscovered(
   int r = 0;
 
   try {
-    auto discovered = _scansync.GetDiscovered();
-    for (uint32_t n = 0; (n < discovered.size()) && (n < max_results); n++) {
-      results[n] = discovered[n];
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
     }
-    r = (int) discovered.size();
+
+    r = manager->DiscoverScanSyncs(results, JS_ENCODER_MAX);
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;
@@ -494,6 +501,26 @@ int jsScanSystemGetScanSyncEncoder(
     r = manager->GetScanSyncEncoder(serial_main,
                                     serial_aux1,
                                     serial_aux2);
+  } catch (std::exception &e) {
+    (void)e;
+    r = JS_ERROR_INTERNAL;
+  }
+
+  return r;
+}
+
+EXPORTED
+int jsScanSystemSetDefaultScanSyncEncoder(jsScanSystem scan_system)
+{
+  int r = 0;
+
+  try {
+    ScanManager *manager = _get_scan_manager_object(scan_system);
+    if (nullptr == manager) {
+      return JS_ERROR_INVALID_SCAN_SYSTEM;
+    }
+
+    r = manager->SetDefaultScanSyncEncoder();
   } catch (std::exception &e) {
     (void)e;
     r = JS_ERROR_INTERNAL;

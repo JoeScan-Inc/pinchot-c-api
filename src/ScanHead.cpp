@@ -348,12 +348,16 @@ int ScanHead::SendScanAlignmentValue()
 
 int ScanHead::SendKeepAlive()
 {
-  // 16.3 and newer use Heartbeat as keep alive
-  if (m_firmware_version.IsCompatible(16, 3, 0)){
-    // scan head doesn't support, don't send
-    RETURN_ERROR("Deprecated on firmware 16.3.0 and higher",
-      JS_ERROR_VERSION_COMPATIBILITY);
+  // TODO: Revisit heartbeat, we needed to get 16.3.1 out quickly
+  if (false) {
+    // 16.3.0 and newer use Heartbeat as keep alive
+    if (m_firmware_version.IsCompatible(16, 3, 0)){
+      // scan head doesn't support, don't send
+      RETURN_ERROR("Deprecated on firmware 16.3.0 and higher",
+        JS_ERROR_VERSION_COMPATIBILITY);
+    }
   }
+
   // Don't clear or set error for this function as it is only used internally
   // by a separate non-user thread to send periodic keep alive messages to
   // the scan head.
@@ -1218,6 +1222,7 @@ int32_t ScanHead::SendScanSyncStatusRequest(jsScanSyncDiscovered *scan_syncs,
     }
 
     results_len = (std::min)(scan_sync_size, max_results);
+
     for (uint32_t i = 0; i < results_len; i++) {
       auto sync = fb_scan_syncs->Get(i);
       jsScanSyncDiscovered ss;
