@@ -28,8 +28,8 @@ TCPSocket::TCPSocket(std::string client_name, uint32_t client_ip, uint32_t ip,
   client_addr.sin_port = 0;
   r = bind(sockfd, (struct sockaddr *)&client_addr, sizeof(client_addr));
   if (0 > r) {
-    NetworkInterface::Close();
     std::string e = NETWORK_TRACE;
+    NetworkInterface::Close();
     throw std::runtime_error(e);
   }
 

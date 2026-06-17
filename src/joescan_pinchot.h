@@ -728,7 +728,7 @@ typedef struct {
 } jsRawProfile;
 
 /**
- * @brief This structure is used to return a greyscale image capture from the
+ * @brief This structure is used to return a grayscale image capture from the
  * scan head.
  */
 typedef struct {
@@ -1914,9 +1914,9 @@ EXPORTED int32_t PRE jsScanHeadGetBrightnessCorrectionLaser_BETA(
  * 
  * @deprecated Will be removed in a future release.
  *
- * @note Use `jsScanHeadSetIdleScanPeriod` to configure the scan head to return
- * profiles at a reduced rate when the encoder has not traveled enough to
- * trigger a new profile to be returned.
+ * @note It is highly recommended that developers implement a profile dropping
+ * solution in their own scan loops, rather than relying on this deprecated
+ * feature.
  *
  * @note This feature is currently not supported with frame scanning.
  *

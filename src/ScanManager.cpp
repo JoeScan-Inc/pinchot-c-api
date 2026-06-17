@@ -135,7 +135,7 @@ int32_t ScanManager::Discover()
     }
   }
 
-  // TODO: revist timeout? make it user controlled?
+  // TODO: revisit timeout? make it user controlled?
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   m_serial_to_discovered.clear();
 
@@ -763,6 +763,17 @@ int32_t ScanManager::Disconnect()
     });
 
   m_state = SystemState::Disconnected;
+
+  m_condition.notify_all();
+
+  if (m_keep_alive_thread.joinable()) {
+    m_keep_alive_thread.join();
+  }
+
+  if (m_heart_beat_thread.joinable()) {
+    m_heart_beat_thread.join();
+  }
+
   m_is_encoder_dirty = true;
   return 0;
 }
@@ -1377,9 +1388,14 @@ void ScanManager::KeepAliveThread()
 
   while (1) {
     std::unique_lock<std::mutex> lk(m_mutex);
-    m_condition.wait_for(lk, std::chrono::milliseconds(keep_alive_send_ms));
 
-    if (SystemState::Close == m_state) {
+    auto should_close = [&]() {
+      return m_state == SystemState::Close || m_state == SystemState::Disconnected;
+    };
+
+    m_condition.wait_for(lk, std::chrono::milliseconds(keep_alive_send_ms), should_close);
+
+    if (should_close()) {
       return; // close the thread
     } else if (SystemState::Scanning != m_state) {
       continue;
@@ -1415,12 +1431,15 @@ void ScanManager::HeartBeatThread()
 
   while (1) {
     std::unique_lock<std::mutex> lk(m_mutex);
-    m_condition.wait_for(lk, std::chrono::milliseconds(SEND_INTERVAL_MS));
 
-    if (SystemState::Close == m_state) {
+    auto should_close = [&]() {
+      return m_state == SystemState::Close || m_state == SystemState::Disconnected;
+    };
+
+    m_condition.wait_for(lk, std::chrono::milliseconds(SEND_INTERVAL_MS), should_close);
+
+    if (should_close()) {
       return; // close the thread
-    } else if (SystemState::Disconnected == m_state) {
-      continue;
     }
 
     // Set timeout based on system state

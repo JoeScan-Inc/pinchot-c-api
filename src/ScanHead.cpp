@@ -54,7 +54,7 @@ ScanHead::ScanHead(ScanManager &manager, jsDiscovered &discovered, uint32_t id)
     m_ip_address(discovered.ip_addr),
     m_client_name(discovered.client_name_str),
     m_client_ip_address(discovered.client_ip_addr),
-    m_min_ecoder_travel(0),
+    m_min_encoder_travel(0),
     m_idle_scan_period_ns(0),
     m_last_encoder(0),
     m_last_timestamp(0),
@@ -124,11 +124,14 @@ int ScanHead::Connect(uint32_t timeout_s)
   // manually unlock; calling GetStatusMessage will lock the mutex again
   m_mutex.unlock();
 
+  // TODO: Handle this better. GetStatusMessage needs it to be set to
+  // `true` before calling since `IsConnected` relies on it.
   m_is_heart_beating = true;
 
   StatusMessage status;
   r = GetStatusMessage(&status);
   if (0 != r) {
+    m_is_heart_beating = false;
     return r; // rely on previous function to set extended error
   }
 
@@ -147,6 +150,7 @@ int ScanHead::Disconnect(void)
 
   std::scoped_lock<std::mutex> lk(m_mutex);
   m_is_receive_thread_active = false;
+  m_is_heart_beating = false;
   m_receive_thread.join();
 
   using namespace schema::client;
@@ -378,8 +382,8 @@ int ScanHead::SendKeepAlive()
 
 int ScanHead::GetHeartBeat(struct timeval *timeout)
 {
-  static const int32_t buf_len = 64;
-  static uint8_t buf[buf_len];
+  static constexpr int32_t buf_len = 64;
+  uint8_t buf[buf_len] = {};
   int r = -1;
 
   if (!m_firmware_version.IsCompatible(16, 3, 0)) {
@@ -1060,8 +1064,8 @@ int ScanHead::GetStatusMessage(StatusMessage *status)
 {
   CLEAR_ERROR();
 
-  static const int32_t buf_len = 256;
-  static uint8_t buf[buf_len];
+  static constexpr int32_t buf_len = 256;
+  uint8_t buf[buf_len] = {};
   int r = -1;
 
   if (!IsConnected()) {
@@ -1153,8 +1157,8 @@ int32_t ScanHead::SendScanSyncStatusRequest(jsScanSyncDiscovered *scan_syncs,
 {
   CLEAR_ERROR();
 
-  static const int32_t buf_len = 1024;
-  static uint8_t buf[buf_len];
+  static constexpr int32_t buf_len = 1024;
+  uint8_t buf[buf_len] = {};
   uint32_t results_len = 0;
   int r = -1;
 
@@ -2403,10 +2407,10 @@ void ScanHead::ThreadScanningReceive()
       assert(0 == r);
       m_last_sequence = packet.header.sequence_number;
     } else {
-      if ((0 < m_min_ecoder_travel) && (0 < packet.encoders.size())) {
+      if ((0 < m_min_encoder_travel) && (0 < packet.encoders.size())) {
         uint32_t t = (uint32_t) std::abs(packet.encoders[0] - m_last_encoder);
         uint32_t d = (uint32_t) (packet.header.timestamp_ns - m_last_timestamp);
-        if (t < m_min_ecoder_travel) {
+        if (t < m_min_encoder_travel) {
           if (0 == m_idle_scan_period_ns) continue;
           if (d < m_idle_scan_period_ns) continue;
         }
@@ -2566,13 +2570,13 @@ jsCableOrientation ScanHead::GetCableOrientation() const
 
 uint32_t ScanHead::GetMinimumEncoderTravel() const
 {
-  return m_min_ecoder_travel;
+  return m_min_encoder_travel;
 }
 
 int32_t ScanHead::SetMinimumEncoderTravel(uint32_t travel)
 {
   CLEAR_ERROR();
-  m_min_ecoder_travel = travel;
+  m_min_encoder_travel = travel;
 
   return 0;
 }

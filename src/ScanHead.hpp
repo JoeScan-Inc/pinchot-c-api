@@ -476,7 +476,7 @@ class ScanHead {
   uint8_t *m_packet_buf;
   uint32_t m_packet_buf_len;
   uint32_t m_scan_period_us;
-  uint32_t m_min_ecoder_travel;
+  uint32_t m_min_encoder_travel;
   uint64_t m_idle_scan_period_ns;
   int64_t m_last_encoder;
   uint64_t m_last_timestamp;

@@ -23,7 +23,7 @@
 namespace joescan {
 /**
  * The maximum payload of an ethernet frame is 1500 bytes; since we want to
- * limit our datagrams to be conatined in a single ethernet frame, we split
+ * limit our datagrams to be contained in a single ethernet frame, we split
  * all data into datagrams with a maximum of 1500 octets/bytes. Reserve 32
  * bytes for the IP & UDP headers.
  */

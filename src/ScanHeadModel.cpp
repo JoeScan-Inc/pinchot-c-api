@@ -199,7 +199,7 @@ bool ScanHeadModel::IsCameraValid(jsCamera camera) const
     return false;
   }
 
-  // subtract to account for valid cameras begining at 1
+  // subtract to account for valid cameras beginning at 1
   uint32_t val = ((uint32_t)camera) - 1;
   return ((val < m_specification.number_of_cameras) ? true : false);
 }
@@ -210,7 +210,7 @@ bool ScanHeadModel::IsLaserValid(jsLaser laser) const
     return false;
   }
 
-  // subtract to account for valid lasers begining at 1
+  // subtract to account for valid lasers beginning at 1
   uint32_t val = ((uint32_t)laser) - 1;
   return ((val < m_specification.number_of_lasers) ? true : false);
 }
