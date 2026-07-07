@@ -1,0 +1,5 @@
+# The native Pinchot library is not committed to the repository.
+# Drop a built pinchot.dll / libpinchot.so / libpinchot.dylib here (or point
+# PINCHOT_LIB_DIR at wherever you built it) and the wrapper will load it.
+*
+!.gitignore
