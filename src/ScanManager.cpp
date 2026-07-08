@@ -16,6 +16,8 @@
 
 #include <execution>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -126,6 +128,32 @@ int32_t ScanManager::Discover()
       if (0 == r) {
         // sendto succeeded in sending message through interface
         sendto_count++;
+      }
+    }
+
+    // Optionally unicast the ClientDiscovery message to explicit hosts so that
+    // discovery works across a router/NAT boundary (e.g. WSL2 NAT networking),
+    // where the limited 255.255.255.255 broadcast never reaches the device.
+    // PINCHOT_DISCOVER_HOSTS is a comma-separated IPv4 list, e.g.
+    // "192.168.1.31,192.168.1.13". Unset -> behavior is unchanged.
+    const char *hosts_env = std::getenv("PINCHOT_DISCOVER_HOSTS");
+    if (nullptr != hosts_env) {
+      std::stringstream hss(hosts_env);
+      std::string token;
+      while (std::getline(hss, token, ',')) {
+        unsigned int a, b, c, d;
+        if ((4 != std::sscanf(token.c_str(), " %u.%u.%u.%u", &a, &b, &c, &d)) ||
+            (a > 255) || (b > 255) || (c > 255) || (d > 255)) {
+          continue;
+        }
+        uint32_t ip = (a << 24) | (b << 16) | (c << 8) | d;
+        for (auto const &socket : sockets) {
+          // UDPBroadcastSocket::Send hides the base unicast overload; qualify
+          // the call so we target `ip` instead of INADDR_BROADCAST.
+          if (0 == socket->UDPSocket::Send(ip, kBroadcastDiscoverPort, builder)) {
+            sendto_count++;
+          }
+        }
       }
     }
 
