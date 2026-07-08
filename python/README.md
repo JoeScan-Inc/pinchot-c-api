@@ -146,6 +146,9 @@ bitmap — no imaging library required.
 
 See the [`examples/`](examples) directory:
 
+- `walkthrough.ipynb` — Jupyter notebook touring the API end to end, with
+  plots of diagnostic images, diagnostic profiles, and scan data
+  (requires `matplotlib` and `numpy`)
 - `discover.py` — list all scan heads on the network
 - `configure_and_connect.py SERIAL` — configure, connect, print status
 - `basic_scanning.py SERIAL [SECONDS]` — scan and summarize the profiles read
