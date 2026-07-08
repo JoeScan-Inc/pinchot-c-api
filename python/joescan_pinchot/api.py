@@ -24,6 +24,7 @@ Every method translates a negative ``jsError`` return value into a
 """
 
 import ctypes
+import struct
 
 from . import _native as _n
 from .enums import (
@@ -46,6 +47,7 @@ __all__ = [
     "ScanHead",
     "Profile",
     "ProfilePoint",
+    "CameraImage",
     "Discovered",
     "ScanSyncDiscovered",
     "get_api_version",
@@ -251,6 +253,79 @@ class Profile:
             f"camera={self.camera.name}, laser={self.laser.name}, "
             f"sequence_number={self.sequence_number}, "
             f"points={self._data_len})"
+        )
+
+
+class CameraImage:
+    """A grayscale diagnostic image copied out of a native ``jsCameraImage``.
+
+    ``pixels`` holds the raw 8-bit grayscale pixel data, row-major from the
+    top-left corner (``height`` rows of ``width`` bytes).  Use :meth:`to_bmp`
+    for the image encoded as a standard Windows BMP file, or :meth:`save` to
+    write it straight to disk.
+    """
+
+    __slots__ = (
+        "scan_head_id", "camera", "laser", "timestamp_ns", "encoder_values",
+        "camera_exposure_time_us", "laser_on_time_us", "height", "width",
+        "pixels",
+    )
+
+    def __init__(self, im):
+        self.scan_head_id = im.scan_head_id
+        self.camera = Camera(im.camera)
+        self.laser = Laser(im.laser)
+        self.timestamp_ns = im.timestamp_ns
+        n = im.num_encoder_values
+        self.encoder_values = [im.encoder_values[i] for i in range(n)]
+        self.camera_exposure_time_us = im.camera_exposure_time_us
+        self.laser_on_time_us = im.laser_on_time_us
+        self.height = im.image_height
+        self.width = im.image_width
+        # Copy the pixel data out of the native struct so this object stays
+        # valid independently of the (large) ctypes buffer.
+        self.pixels = ctypes.string_at(
+            ctypes.addressof(im.data), self.height * self.width
+        )
+
+    def to_bmp(self):
+        """Return the image as a standard BMP file (``bytes``).
+
+        The encoding is an uncompressed 8-bit-per-pixel BMP with a grayscale
+        palette, viewable by any image tool.  Write it to a ``.bmp`` file or
+        load it with e.g. Pillow via ``PIL.Image.open(io.BytesIO(...))``.
+        """
+        w, h = self.width, self.height
+        row_len = (w + 3) & ~3  # BMP rows are padded to 4-byte multiples
+        pad = b"\x00" * (row_len - w)
+        # BMP stores rows bottom-up.
+        rows = bytearray()
+        for row in range(h - 1, -1, -1):
+            rows += self.pixels[row * w:(row + 1) * w]
+            rows += pad
+        palette = b"".join(
+            struct.pack("<BBBB", i, i, i, 0) for i in range(256)
+        )
+        data_offset = 14 + 40 + len(palette)
+        file_header = struct.pack(
+            "<2sIHHI", b"BM", data_offset + len(rows), 0, 0, data_offset
+        )
+        # BITMAPINFOHEADER: 8 bpp, uncompressed (BI_RGB), 256 palette entries.
+        info_header = struct.pack(
+            "<IiiHHIIiiII", 40, w, h, 1, 8, 0, len(rows), 2835, 2835, 256, 256
+        )
+        return file_header + info_header + palette + bytes(rows)
+
+    def save(self, path):
+        """Write the image to ``path`` as a BMP file."""
+        with open(path, "wb") as f:
+            f.write(self.to_bmp())
+
+    def __repr__(self):
+        return (
+            f"CameraImage(scan_head_id={self.scan_head_id}, "
+            f"camera={self.camera.name}, laser={self.laser.name}, "
+            f"width={self.width}, height={self.height})"
         )
 
 
@@ -966,6 +1041,50 @@ class ScanHead:
         )
         self._check(r, "failed to get diagnostic profile")
         return profile
+
+    def get_diagnostic_image(self, camera, laser, laser_on_time_us,
+                             camera_exposure_time_us,
+                             mode=DiagnosticMode.FIXED_EXPOSURE):
+        """Capture a diagnostic image using ``camera`` and ``laser``.
+
+        Call after :meth:`ScanSystem.connect` but not while scanning.
+        Returns a :class:`CameraImage`; use its :meth:`~CameraImage.to_bmp`
+        or :meth:`~CameraImage.save` for a standard bitmap image.
+        """
+        image = _n.jsCameraImage()
+        r = _n.lib.jsScanHeadGetDiagnosticImage(
+            self._handle, int(camera), int(laser), int(mode),
+            int(laser_on_time_us), int(camera_exposure_time_us),
+            ctypes.byref(image)
+        )
+        self._check(r, "failed to get diagnostic image")
+        return CameraImage(image)
+
+    def get_diagnostic_image_camera(self, camera, laser_on_time_us,
+                                    camera_exposure_time_us,
+                                    mode=DiagnosticMode.FIXED_EXPOSURE):
+        """Capture a diagnostic image using ``camera``; the laser in view is
+        chosen automatically.  Returns a :class:`CameraImage`."""
+        image = _n.jsCameraImage()
+        r = _n.lib.jsScanHeadGetDiagnosticImageCamera(
+            self._handle, int(camera), int(mode), int(laser_on_time_us),
+            int(camera_exposure_time_us), ctypes.byref(image)
+        )
+        self._check(r, "failed to get diagnostic image")
+        return CameraImage(image)
+
+    def get_diagnostic_image_laser(self, laser, laser_on_time_us,
+                                   camera_exposure_time_us,
+                                   mode=DiagnosticMode.FIXED_EXPOSURE):
+        """Capture a diagnostic image with ``laser`` in view; the camera is
+        chosen automatically.  Returns a :class:`CameraImage`."""
+        image = _n.jsCameraImage()
+        r = _n.lib.jsScanHeadGetDiagnosticImageLaser(
+            self._handle, int(laser), int(mode), int(laser_on_time_us),
+            int(camera_exposure_time_us), ctypes.byref(image)
+        )
+        self._check(r, "failed to get diagnostic image")
+        return CameraImage(image)
 
     def __repr__(self):
         return f"ScanHead(id={self.id}, serial={self.serial})"

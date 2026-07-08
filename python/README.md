@@ -124,6 +124,7 @@ The package has two layers:
 | `jsScanHeadGetProfiles` | `head.get_profiles(max_profiles)` → `list[Profile]` |
 | `jsScanHeadSetConfiguration` | `head.set_configuration(cfg)` |
 | `jsScanHeadSetWindowRectangular` | `head.set_window_rectangular(top, bottom, left, right)` |
+| `jsScanHeadGetDiagnosticImage` | `head.get_diagnostic_image(camera, laser, ...)` → `CameraImage` |
 | `enum jsUnits`, `jsCamera`, … | `js.Units`, `js.Camera`, … (`IntEnum`) |
 
 Camera/laser-specific variants (`...Camera` / `...Laser`) are folded into single
@@ -135,6 +136,11 @@ objects, with `x`/`y` already rescaled from the raw 1/1000 units into
 scan-system units. The point data is copied out of the native buffer, so
 `Profile` objects remain valid after the next `get_profiles()` call. Use
 `head.get_raw_profiles()` for the untouched `jsRawProfile` structs.
+
+Diagnostic image captures (`head.get_diagnostic_image[_camera|_laser](...)`)
+return a `CameraImage` whose `.pixels` attribute holds the raw 8-bit grayscale
+data and whose `.to_bmp()` / `.save(path)` methods produce a standard BMP
+bitmap — no imaging library required.
 
 ## Examples
 

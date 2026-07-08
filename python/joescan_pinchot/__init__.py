@@ -81,6 +81,7 @@ except OSError as exc:  # pragma: no cover - environment dependent
 # The high-level API references ``_native.lib`` and therefore must be imported
 # after the load attempt above.
 from .api import (  # noqa: E402,F401
+    CameraImage,
     Discovered,
     Profile,
     ProfilePoint,
@@ -112,6 +113,7 @@ __all__ = [
     "ScanHead",
     "Profile",
     "ProfilePoint",
+    "CameraImage",
     "Discovered",
     "ScanSyncDiscovered",
     "PinchotError",
